@@ -1,13 +1,13 @@
 :root{
   --navy-900:#1a2a55;--navy-800:#1f3363;--navy-700:#1f3a75;--navy-600:#2f4f96;--blue:#3d6fd8;--blue-soft:#eaf0fb;
-  --ink:#1d2d52;--ink-2:#5f6f90;--ink-3:#9aa6bf;--line:#e4e9f3;--bg:#f4f6fb;--bg-soft:#eef2f9;
+  --ink:#1d2d52;--ink-2:#5f6f90;--ink-3:#9aa6bf;--line:#e4e9f3;--bg:#ffffff;--bg-soft:#f4f7fc;
   --ok:#0f9d6a;--ok-soft:#e5f7ef;--warn:#c77700;--warn-soft:#fff3dc;--bad:#d23a4a;--bad-soft:#fde8ea;
   --grad:linear-gradient(180deg,#1c2e5c 0%,#1f3466 100%);
   --r:14px;--nav-h:62px;--hdr-h:54px;
   --font:"Sarabun","Noto Sans Thai","Leelawadee UI",system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.4;overflow-x:hidden;max-width:100vw}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14.5px;line-height:1.35;overflow-x:hidden;max-width:100vw}
 body{padding-top:calc(var(--hdr-h) + env(safe-area-inset-top));padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 8px)}
 h1,h2,h3,p{margin:0}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -139,23 +139,13 @@ textarea.inp{min-height:84px;resize:vertical}
 .slip .f{position:absolute;color:#111;line-height:1;transform:translateY(-50%);white-space:nowrap;font-family:"Sarabun","Noto Sans Thai",sans-serif;font-size:1.838cqw}
 @media print{.slipbox{max-height:none;overflow:visible;border:0}.slip{page-break-after:always;max-width:none}.slipbox.zoom .slip{width:100%}}
 
-/* calm look (matches the original ART app): grey-blue page, white rounded cards, solid navy header */
-.list{background:#fff;border:1px solid var(--line);border-radius:16px;padding:2px 14px}
-.li:last-child{border-bottom:0}
-.li{padding:13px 2px}
-.card{border-radius:16px}.card.soft{background:#fff;border:1px solid var(--line)}
-.tile,.lbl,.search,.inp,.chip{background:#fff}
-.lbl{border:1px solid var(--line)}
+/* calm look: WHITE page, solid navy header, compact type (owner preference) */
+.card.soft{background:var(--bg-soft);border:0}
 .mini{background:#fff;border:1px solid var(--line);color:var(--navy-700)}
-.mini b{font-size:22px}
+.mini b{font-size:19px}
 .mini span{color:var(--ink-2)}
-.tile{border-radius:16px;padding:12px}
-.seg{background:var(--bg-soft)}
-.hero{border-radius:0 0 18px 18px}
-.tabs{background:var(--bg)}
-.sheet{background:var(--bg)}
-.sheet .list,.sheet .card{background:#fff}
-.sec{color:var(--ink-2);font-size:13.5px}
+.tabs{background:#fff}
+.hero{border-radius:0 0 16px 16px}
 .btn{background:var(--navy-900)}
 .btn.line{background:#fff}.btn.ghost{background:var(--blue-soft);color:var(--navy-700)}
-.card .list{border:0;padding:0;border-radius:0;background:transparent}.card .li{padding:11px 2px}
+
