@@ -131,3 +131,10 @@ textarea.inp{min-height:84px;resize:vertical}
 .login .box{background:#fff;border-radius:20px;padding:26px 22px;width:100%;max-width:380px;text-align:center}
 @media print{.hdr,.nav,.cartbar,.noprint{display:none!important}body{padding:0}}
 @media print{body>*:not(#pa){display:none!important}#pa{display:block!important;font-size:14px;padding:12px}}
+/* delivery slip */
+.slipbox{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:10px;background:#fff}
+.slip{container-type:inline-size;position:relative;width:100%;max-width:1088px;margin:0 auto}
+.slipbox.zoom .slip{width:200%;max-width:none}
+.slip img{display:block;width:100%;height:auto}
+.slip .f{position:absolute;color:#111;line-height:1;transform:translateY(-50%);white-space:nowrap;font-family:"Sarabun","Noto Sans Thai",sans-serif;font-size:1.838cqw}
+@media print{.slipbox{max-height:none;overflow:visible;border:0}.slip{page-break-after:always;max-width:none}.slipbox.zoom .slip{width:100%}}

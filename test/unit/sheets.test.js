@@ -122,13 +122,13 @@ test('works when the real sheet has re-ordered columns plus an extra helper colu
 test('order.save replaces items with row deletion (descending) and never leaves duplicates', async () => {
   await withStore({}, async (s, g) => {
     const base = { no: 'OD-S1', customerId: '57900', date: '2026-11-26', paymentTerm: 'เงินสด' };
-    await execBatch(s, [{ type: 'order.save', opId: oid(), payload: { order: { ...base, status: 'draft' }, lines: [{ code: '4012', name: 'a', qty: 1, price: 10 }, { code: '5029', name: 'b', qty: 2, price: 20 }, { code: '1001', name: 'c', qty: 3, price: 30 }] } }], ctx);
+    await execBatch(s, [{ type: 'order.save', opId: oid(), payload: { order: { ...base, status: 'ร่าง' }, lines: [{ code: '4012', name: 'a', qty: 1, price: 10 }, { code: '5029', name: 'b', qty: 2, price: 20 }, { code: '1001', name: 'c', qty: 3, price: 30 }] } }], ctx);
     assert.equal(asObjs(g, 'order_items').filter(i => i.orderNo === 'OD-S1').length, 3);
-    await execBatch(s, [{ type: 'order.save', opId: oid(), payload: { order: { ...base, status: 'confirmed' }, lines: [{ code: '4012', name: 'a', qty: 5, price: 10 }] } }], ctx);
+    await execBatch(s, [{ type: 'order.save', opId: oid(), payload: { order: { ...base, status: 'รอส่ง' }, lines: [{ code: '4012', name: 'a', qty: 5, price: 10 }] } }], ctx);
     const items = asObjs(g, 'order_items').filter(i => i.orderNo === 'OD-S1');
     assert.equal(items.length, 1); assert.equal(items[0].amount, '50');
     assert.equal(asObjs(g, 'orders').filter(o => o.no === 'OD-S1').length, 1);
-    assert.equal(asObjs(g, 'orders').find(o => o.no === 'OD-S1').status, 'confirmed');
+    assert.equal(asObjs(g, 'orders').find(o => o.no === 'OD-S1').status, 'รอส่ง');
   });
 });
 

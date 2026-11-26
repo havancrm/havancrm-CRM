@@ -173,8 +173,10 @@ export function customerStats(m, id) {
     else cycleState = 'ok';
   }
 
-  const visits = (m.visitsByCust.get(id) || []).filter(visitDone);
-  const lastVisit = visits.length ? dateOf(visits[visits.length - 1].completedAt || visits[visits.length - 1].at) : '';
+  // last visit = latest completed visit row OR activity "เข้าพบ" (aCRM logs both)
+  let lastVisit = '';
+  for (const v of (m.visitsByCust.get(id) || []).filter(visitDone)) { const d = dateOf(v.completedAt || v.at); if (d > lastVisit) lastVisit = d; }
+  for (const a of m.activitiesByCust.get(id) || []) if (a.type === 'เข้าพบ') { const d = dateOf(a.at); if (d > lastVisit) lastVisit = d; }
   const daysSinceVisit = lastVisit ? today - dayNum(lastVisit) : null;
   const visitDue = daysSinceVisit === null || daysSinceVisit > s.visitDef;
 
@@ -206,16 +208,53 @@ export function customersBy(m, filter) {
   return m.customers.filter(c => {
     const st = customerStats(m, c.id);
     if (filter === 'all' || !filter) return true;
-    if (filter === 'new') return isNewCustomer(m, c);
+    if (filter === 'new') return isFirstPurchaseNew(m, c) || isRecentlyRegistered(m, c);
+    if (filter === 'temp') return isTempId(c.id);
     return st.status === filter;
   });
 }
 
-// "ลูกค้าใหม่": first purchase within the last N days (default 90) or no purchases yet but created recently
-export function isNewCustomer(m, c, days = m.settings.newDays) {
+// ---- new customers: TWO different things (kept apart on purpose) ----
+// (a) "ซื้อครั้งแรก"  : first purchase within N days (comes from bills)
+// (b) "เพิ่งเพิ่มทะเบียน": the shop was added to the register within N days (activity "เพิ่มลูกค้า"),
+//     whether or not it has bought yet. Shops created in the field have a temporary code N-xxxxxx.
+export const NEW_PREFIX = 'N-';
+export const isTempId = id => String(id || '').startsWith(NEW_PREFIX);
+export function registeredAt(m, id) {
+  if (!m._reg) {
+    m._reg = new Map();
+    for (const a of m.raw.activities || []) if (a.type === 'เพิ่มลูกค้า' && a.customerId) { const d = dateOf(a.at); if (d && (!m._reg.has(a.customerId) || d < m._reg.get(a.customerId))) m._reg.set(a.customerId, d); }
+  }
+  return m._reg.get(id) || '';
+}
+export function isFirstPurchaseNew(m, c, days = m.settings.newDays) {
   const st = customerStats(m, c.id);
-  if (!st.firstDate) return false;
-  return dayNum(m.today) - dayNum(st.firstDate) <= days;
+  return !!st.firstDate && dayNum(m.today) - dayNum(st.firstDate) <= days;
+}
+export function isRecentlyRegistered(m, c, days = m.settings.newDays) {
+  const r = registeredAt(m, c.id);
+  return !!r && dayNum(m.today) - dayNum(r) <= days;
+}
+export const isNewCustomer = isFirstPurchaseNew;       // legacy alias (first purchase)
+
+// Duplicate guard for a shop about to be created. Hard match = same normalised name or same phone.
+export function findDuplicateCustomers(m, { name = '', phones = [] } = {}) {
+  const n = normText(name), ds = (phones || []).map(digits).filter(d => d.length >= 8);
+  const out = [];
+  for (const e of buildSearchIndex(m)) {
+    const reasons = [];
+    if (n && e.name === n) reasons.push('ชื่อซ้ำ');
+    else if (n.length >= 6 && dice(name, e.c.name) >= 0.88) reasons.push('ชื่อคล้ายมาก');
+    if (ds.length && e.phones.some(p => p.length >= 8 && ds.includes(p))) reasons.push('เบอร์ซ้ำ');
+    if (reasons.length) out.push({ c: e.c, reasons, hard: reasons.some(r => r !== 'ชื่อคล้ายมาก') });
+  }
+  return out;
+}
+// temp code N-yymmdd-XXXX, derived from the op id so a retried save yields the SAME code
+export function tempCustomerId(opId, now = Date.now()) {
+  const d = new Date(now + 7 * 3600000);
+  let h = 2166136261; for (const ch of String(opId)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return `${NEW_PREFIX}${String(d.getUTCFullYear() + 543).slice(2)}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${h.toString(36).toUpperCase().padStart(4, '0').slice(-4)}`;
 }
 
 // ---------- sales ----------
@@ -512,11 +551,28 @@ export function toCsv(rows, cols) {
 export const lineAmount = l => Math.round(num(l.qty) * num(l.price) * 100) / 100;
 export const cartTotal = lines => lines.reduce((s, l) => s + lineAmount(l), 0);
 
-export function newOrderNo(now = Date.now(), seed = '') {
+// Order status words are the ones aCRM wrote into the sheet.
+export const ORDER_ST = { draft: 'ร่าง', pending: 'รอส่ง', delivered: 'ส่งแล้ว', cancelled: 'ยกเลิก' };
+export const ORDER_ST_LIST = Object.values(ORDER_ST);
+// aCRM order number: NN + ddmmyy (Buddhist-era year), NN = running number of that day (01261169 = #1 on 26/11/69)
+export function newOrderNo(orders, now = Date.now()) {
   const d = new Date(now + 7 * 3600000);
-  const ymd = `${String(d.getUTCFullYear()).slice(2)}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
-  const rnd = (seed + Math.random().toString(36).slice(2, 6)).slice(-4).toUpperCase();
-  return `OD${ymd}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${rnd}`;
+  const suffix = `${pad(d.getUTCDate())}${pad(d.getUTCMonth() + 1)}${String(d.getUTCFullYear() + 543).slice(2)}`;
+  const re = new RegExp(`^(\\d{2})${suffix}$`);
+  let max = 0;
+  for (const o of orders || []) { const m = re.exec(String(o.no)); if (m) max = Math.max(max, +m[1]); }
+  return `${pad(max + 1)}${suffix}`;
+}
+
+// Thai baht in words: 10600 -> "หนึ่งหมื่นหกร้อยบาทถ้วน"
+export function bahtText(n) {
+  n = Math.round(num(n) * 100) / 100;
+  if (!n) return 'ศูนย์บาทถ้วน';
+  const DG = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'], UN = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
+  const six = s => { let o = ''; const L = s.length; for (let i = 0; i < L; i++) { const d = +s[i], p = L - i - 1; if (!d) continue; if (p === 1 && d === 1) o += 'สิบ'; else if (p === 1 && d === 2) o += 'ยี่สิบ'; else if (p === 0 && d === 1 && L > 1 && +s[L - 2] > 0) o += 'เอ็ด'; else o += DG[d] + UN[p]; } return o; };
+  const int = x => { const s = String(x); return s.length <= 6 ? six(s) : int(s.slice(0, -6)) + 'ล้าน' + six(s.slice(-6)); };
+  const [b, st] = n.toFixed(2).split('.');
+  return (+b ? int(b) + 'บาท' : '') + (+st ? six(st) + 'สตางค์' : 'ถ้วน');
 }
 
 // Delivery document (temporary delivery slip). NO product codes; customer code shown.
@@ -535,4 +591,18 @@ export function orderDocText(m, order, lines) {
   out.push(`รวม ${money(cartTotal(lines))} บาท`);
   if (order.note) out.push(`หมายเหตุ: ${order.note}`);
   return out.join('\n');
+}
+
+// Orders waiting for their bill: match imported bills by customer + equal total + bill date within 7 days after the order.
+export function matchOrdersToBills(m, newBills, newTotals) {
+  const links = [];
+  const used = new Set();
+  for (const o of m.orders || []) {
+    if (o.billNo || ![ORDER_ST.pending, ORDER_ST.delivered].includes(o.status)) continue;
+    const tot = (m.orderItems.get(o.no) || []).reduce((s, i) => s + num(i.amount), 0);
+    const od = dayNum(o.date);
+    const cands = newBills.filter(b => !used.has(b.no) && b.customerId === o.customerId && Math.abs((newTotals.get(b.no) ?? NaN) - tot) < 0.01 && dayNum(b.date) >= od && dayNum(b.date) - od <= 7);
+    if (cands.length === 1) { used.add(cands[0].no); links.push({ no: o.no, billNo: cands[0].no }); }
+  }
+  return links;
 }

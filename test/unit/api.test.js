@@ -69,23 +69,41 @@ test('visit.log writes visit + activity + gps by header, and a repeat is a dupli
   assert.equal(r.activities.filter(v => v.opId === `${id}:a`).length, 1);
   assert.equal(r.gps.filter(v => v.opId === `${id}:g`).length, 1);
   const v = r.visits.find(v => v.opId === id);
-  assert.equal(v.status, 'done'); assert.equal(v.lat, '13.75'); assert.equal(v.customerId, '57900');
+  assert.equal(v.status, 'COMPLETED'); assert.equal(v.source, 'CRM App'); assert.equal(v.lat, '13.75'); assert.equal(v.customerId, '57900');
+  assert.equal(r.activities.find(a => a.opId === `${id}:a`).type, 'เข้าพบ');
+  assert.equal(JSON.parse(v.data).by, 'dev@local');
   assert.ok(/^\d{4}-\d\d-\d\dT.*\+07:00$/.test(v.at));
 });
 
-test('appointment creates planned visit + open task; completing closes both', async () => {
+test('appointment = follow-up task "ติดตาม" (aCRM style); completing it closes the task', async () => {
   fresh();
   const id = opId();
   await ops({ type: 'visit.log', opId: id, payload: { customerId: '57901', kind: 'appointment', plannedAt: '2026-12-05', note: 'นัดส่งของ' } });
   let r = await raw();
-  const v = r.visits.find(x => x.opId === id);
-  assert.equal(v.status, 'planned'); assert.equal(v.plannedAt, '2026-12-05');
-  assert.equal(r.tasks.find(t => t.opId === `${id}:t`).status, 'open');
-  const c = await ops({ type: 'visit.complete', opId: opId(), payload: { visitId: v.visitId, customerId: '57901', note: 'เสร็จแล้ว' } });
+  const t = r.tasks.find(x => x.opId === id);
+  assert.equal(t.type, 'ติดตาม'); assert.equal(t.status, 'open'); assert.equal(t.dueAt, '2026-12-05 00:00:00'); assert.equal(t.owner, 'dev@local');
+  assert.equal(JSON.parse(t.data)._lastOpId, id);
+  assert.ok(r.activities.some(a => a.type === 'ติดตาม' && a.refType === 'task' && a.refId === t.taskId));
+  assert.equal(r.visits.filter(v => v.customerId === '57901' && v.status === 'planned').length, 0);
+  const c = await ops({ type: 'task.complete', opId: opId(), payload: { taskId: t.taskId, customerId: '57901', note: 'เสร็จแล้ว', base: t.note } });
   assert.equal(c.body.results[0].status, 'ok');
   r = await raw();
-  assert.equal(r.visits.find(x => x.visitId === v.visitId).status, 'done');
-  assert.equal(r.tasks.find(t => t.opId === `${id}:t`).status, 'done');
+  const t2 = r.tasks.find(x => x.taskId === t.taskId);
+  assert.equal(t2.status, 'done'); assert.ok(t2.completedAt); assert.ok(t2.note.includes('นัดส่งของ') && t2.note.includes('เสร็จแล้ว'));
+});
+
+test('a plain note is an activity "โน้ต" (no visit row); call/navigate taps are logged as activities', async () => {
+  fresh();
+  const n0 = (await raw()).visits.length;
+  const a = await ops({ type: 'visit.log', opId: opId(), payload: { customerId: '57900', kind: 'note', note: 'โน้ตทดสอบ' } },
+    { type: 'activity.log', opId: opId(), payload: { customerId: '57900', type: 'โทร', note: '081-111-2222' } },
+    { type: 'activity.log', opId: opId(), payload: { customerId: '57900', type: 'นำทาง', note: '13.7,100.5' } });
+  assert.deepEqual(a.body.results.map(x => x.status), ['ok', 'ok', 'ok']);
+  const r = await raw();
+  assert.equal(r.visits.length, n0);
+  assert.deepEqual(r.activities.map(x => x.type).sort(), ['นำทาง', 'โทร', 'โน้ต']);
+  const bad = await ops({ type: 'activity.log', opId: opId(), payload: { customerId: '57900', type: 'ลบ' } });
+  assert.equal(bad.body.results[0].status, 'error');
 });
 
 test('customer.geo updates only gps columns + mapLink, logs before/after, keeps other columns', async () => {
@@ -118,23 +136,24 @@ test('order.save: draft -> edit lines -> confirm; items replaced not duplicated;
   fresh();
   const no = 'OD-T1';
   const base = { no, customerId: '57900', date: '2026-11-26', paymentTerm: 'เงินสด' };
-  await ops({ type: 'order.save', opId: opId(), payload: { order: { ...base, status: 'draft' }, lines: [{ code: '4012', name: 'แชมพูออยล์', qty: 5, price: 115 }, { code: '5029', name: 'ครีมนวดอโวคาโด้', qty: 2, price: 140 }] } });
+  await ops({ type: 'order.save', opId: opId(), payload: { order: { ...base, status: 'ร่าง' }, lines: [{ code: '4012', name: 'แชมพูออยล์', qty: 5, price: 115 }, { code: '5029', name: 'ครีมนวดอโวคาโด้', qty: 2, price: 140 }] } });
   let r = await raw();
   assert.equal(r.order_items.filter(i => i.orderNo === no).length, 2);
-  assert.equal(r.orders.find(o => o.no === no).status, 'draft');
+  assert.equal(r.orders.find(o => o.no === no).status, 'ร่าง');
   const id2 = opId();
-  await ops({ type: 'order.save', opId: id2, payload: { order: { ...base, status: 'confirmed', note: 'ส่งเช้า' }, lines: [{ code: '4012', name: 'แชมพูออยล์', qty: 6, price: 110 }] } });
+  await ops({ type: 'order.save', opId: id2, payload: { order: { ...base, status: 'รอส่ง', note: 'ส่งเช้า' }, lines: [{ code: '4012', name: 'แชมพูออยล์', qty: 6, price: 110 }] } });
   r = await raw();
   const items = r.order_items.filter(i => i.orderNo === no);
   assert.equal(items.length, 1); assert.equal(items[0].amount, '660'); assert.equal(items[0].code, '4012');
   assert.equal(r.orders.filter(o => o.no === no).length, 1);
-  assert.equal(r.orders.find(o => o.no === no).status, 'confirmed');
+  assert.equal(r.orders.find(o => o.no === no).status, 'รอส่ง');
+  assert.ok(r.activities.some(a => a.type === 'รับออเดอร์' && a.refId === no));
   assert.equal(r.orders.find(o => o.no === no).createdBy, 'dev@local');
   // double tap on the same op = no change
-  const dup = await ops({ type: 'order.save', opId: id2, payload: { order: { ...base, status: 'confirmed', note: 'ส่งเช้า' }, lines: [{ code: '4012', name: 'แชมพูออยล์', qty: 6, price: 110 }] } });
+  const dup = await ops({ type: 'order.save', opId: id2, payload: { order: { ...base, status: 'รอส่ง', note: 'ส่งเช้า' }, lines: [{ code: '4012', name: 'แชมพูออยล์', qty: 6, price: 110 }] } });
   assert.equal(dup.body.results[0].status, 'duplicate');
   assert.equal((await raw()).order_items.filter(i => i.orderNo === no).length, 1);
-  const empty = await ops({ type: 'order.save', opId: opId(), payload: { order: { ...base, no: 'OD-T2', status: 'confirmed' }, lines: [] } });
+  const empty = await ops({ type: 'order.save', opId: opId(), payload: { order: { ...base, no: 'OD-T2', status: 'รอส่ง' }, lines: [] } });
   assert.equal(empty.body.results[0].status, 'error');
   const neg = await ops({ type: 'order.save', opId: opId(), payload: { order: { ...base, no: 'OD-T3' }, lines: [{ name: 'x', qty: -1, price: 5 }] } });
   assert.equal(neg.body.results[0].status, 'error');
@@ -193,7 +212,7 @@ test('data mapping survives re-ordered columns and extra columns in the real she
   const s = new MemoryStore(buildFixtures({ customers: 5 }));
   s.tabs.visits = s.tabs.visits.map((row, i) => [...row].reverse().concat(i === 0 ? ['helper'] : ['']));
   const { execOp } = await import('../../src/server/exec.js');
-  const res = await execOp(s, { type: 'visit.log', opId: opId(), payload: { customerId: '57900', kind: 'note', note: 'abc' } }, { now: Date.now(), user: 'u', deviceId: 'd', isAdmin: true });
+  const res = await execOp(s, { type: 'visit.log', opId: opId(), payload: { customerId: '57900', kind: 'visit', note: 'abc' } }, { now: Date.now(), user: 'u', deviceId: 'd', isAdmin: true });
   assert.equal(res.status, 'ok');
   const h = s.tabs.visits[0], last = s.tabs.visits.at(-1);
   assert.equal(last[h.indexOf('note')], 'abc');

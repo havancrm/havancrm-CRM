@@ -8,6 +8,7 @@ const colLetter = i => { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26
 
 function cellValue(tab, header, v) {
   if (v === undefined || v === null) return '';
+  if (tab === 'customers' && header === 'activeFlag' && /^(true|false)$/i.test(String(v))) return String(v).toLowerCase() === 'true';
   if (typeof v === 'object') return JSON.stringify(v);
   if (NUMERIC_COLS[tab]?.includes(header) && String(v).trim() !== '' && Number.isFinite(Number(v))) return Number(v);
   return String(v);
@@ -53,6 +54,7 @@ export class MemoryStore {
     for (const [k, v] of Object.entries(patch)) { const i = h.indexOf(k); if (i < 0) throw new SchemaError(`ไม่พบคอลัมน์ ${k} ใน ${tab}`); r[i] = String(cellValue(tab, k, v)); }
     this.writes++;
   }
+  async updateRows(tab, list) { for (const { row, patch } of list) await this.updateRow(tab, row, patch); }
   async deleteRows(tab, rowNos) {
     for (const n of [...rowNos].sort((a, b) => b - a)) this.tabs[tab].splice(n - 1, 1);
     this.writes += rowNos.length;
@@ -158,6 +160,15 @@ export class SheetsStore {
       return { range: `'${tab}'!${colLetter(i)}${rowNo}`, values: [[cellValue(tab, k, v)]] };
     });
     await this._json('/values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
+  }
+  async updateRows(tab, list) {            // one Google call for many cells (Free plan: 50 subrequests/request)
+    if (!list.length) return;
+    const h = await this.headers(tab); const data = [];
+    for (const { row, patch } of list) for (const [k, v] of Object.entries(patch)) {
+      const i = h.indexOf(k); if (i < 0) throw new SchemaError(`ไม่พบคอลัมน์ ${k} ใน ${tab}`);
+      data.push({ range: `'${tab}'!${colLetter(i)}${row}`, values: [[cellValue(tab, k, v)]] });
+    }
+    for (let i = 0; i < data.length; i += 400) await this._json('/values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data: data.slice(i, i + 400) }) });
   }
   async _sheetId(tab) {
     if (!this._sheetIds) {

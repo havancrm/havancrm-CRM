@@ -1,8 +1,8 @@
 import * as D from '../shared/domain.js';
 import { esc, icon, fmtDate, fmtDateTime, sheet, debounce } from '../ui.js';
-import { photoUrl } from '../data.js';
+import { photoUrl, enqueue, S } from '../data.js';
 import { billLinesHtml, openBill, emptyMsg, pager, bindPager } from './common.js';
-import { visitSheet, geoPhotoSheet, editCustomerSheet, completeVisitSheet } from './forms.js';
+import { visitSheet, geoPhotoSheet, editCustomerSheet, completeTaskSheet, assignCodeSheet } from './forms.js';
 
 function daysToBirthday(b, today) {
   const m = /^(?:(\d{4})-)?(\d{2})-(\d{2})/.exec(String(b || ''));
@@ -25,7 +25,7 @@ export default function customer({ m, params, query }) {
 
   const hero = `<div class="hero">
     <div class="name">${esc(c.name)}</div>
-    <div class="row sm" style="margin-top:4px;opacity:.9;flex-wrap:wrap"><span>รหัส ${esc(c.id)}</span><span class="badge" style="background:rgba(255,255,255,.2);color:#fff">${D.STATUS_TH[st.status]}</span>${c.type ? `<span>· ${esc(c.type)}</span>` : ''}</div>
+    <div class="row sm" style="margin-top:4px;opacity:.9;flex-wrap:wrap"><span>รหัส ${esc(c.id)}</span><span class="badge" style="background:rgba(255,255,255,.2);color:#fff">${D.STATUS_TH[st.status]}</span>${D.isTempId(id) ? `<span class="badge" style="background:#ffd36b;color:#5a3b00">ยังไม่มีรหัสบัญชี</span>` : ''}${c.type ? `<span>· ${esc(c.type)}</span>` : ''}</div>
     ${labels.length ? `<div class="chips" style="margin-top:8px">${labels.map(l => `<a class="badge" style="background:rgba(255,255,255,.18);color:#fff" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)}</a>`).join('')}</div>` : ''}
     <div class="quick">
       <button data-act="note">${icon('note')}บันทึก</button>
@@ -38,7 +38,7 @@ export default function customer({ m, params, query }) {
 
   let body = '', after = () => {};
   if (tab === 'overview') ({ body, after } = overview(m, c, st, hasGps));
-  else if (tab === 'info') { body = info(m, c, phones, labels); after = root => { root.querySelector('#edit').onclick = () => editCustomerSheet(c.id); }; }
+  else if (tab === 'info') { body = info(m, c, phones, labels); after = root => { root.querySelector('#edit').onclick = () => editCustomerSheet(c.id); root.querySelector('#assign')?.addEventListener('click', () => assignCodeSheet(c.id)); }; }
   else if (tab === 'history') ({ body, after } = history(m, c));
   else ({ body, after } = visitsTab(m, c));
 
@@ -48,10 +48,13 @@ export default function customer({ m, params, query }) {
     after(root) {
       root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { history.replaceState(null, '', `#/c/${encodeURIComponent(id)}?tab=${b.dataset.tab}`); window.dispatchEvent(new HashChangeEvent('hashchange')); });
       root.querySelector('[data-act="note"]')?.addEventListener('click', () => visitSheet(id));
+      root.querySelector('.quick a[target]')?.addEventListener('click', () => { enqueue('activity.log', { customerId: id, type: 'นำทาง', note: hasGps ? `${c.gpsLat},${c.gpsLng}` : 'ค้นจากที่อยู่' }).catch(() => {}); });
       root.querySelector('[data-act="geo"]')?.addEventListener('click', () => geoPhotoSheet(id));
       root.querySelector('[data-act="call"]')?.addEventListener('click', () => {
-        if (phones.length === 1) { location.href = `tel:${phones[0].replace(/[^\d+]/g, '')}`; return; }
-        sheet(`<h3>โทรหา ${esc(c.name)}</h3><div class="list">${phones.map(p => `<a class="li" href="tel:${esc(p.replace(/[^\d+]/g, ''))}" style="color:inherit">${icon('phone')}<div class="grow t">${esc(p)}</div></a>`).join('')}</div>`);
+        const logCall = ph => enqueue('activity.log', { customerId: id, type: 'โทร', note: ph }).catch(() => {});
+        if (phones.length === 1) { logCall(phones[0]); location.href = `tel:${phones[0].replace(/[^\d+]/g, '')}`; return; }
+        const sh = sheet(`<h3>โทรหา ${esc(c.name)}</h3><div class="list">${phones.map(p => `<a class="li" data-ph="${esc(p)}" href="tel:${esc(p.replace(/[^\d+]/g, ''))}" style="color:inherit">${icon('phone')}<div class="grow t">${esc(p)}</div></a>`).join('')}</div>`);
+        sh.el.addEventListener('click', e => { const a = e.target.closest('[data-ph]'); if (a) logCall(a.dataset.ph); });
       });
       return after(root);
     },
@@ -97,7 +100,8 @@ function overview(m, c, st, hasGps) {
 
 function info(m, c, phones, labels) {
   const row = (k, v) => (v ? `<dt>${k}</dt><dd>${esc(v).replace(/\n/g, '<br>')}</dd>` : '');
-  return `<div class="row between"><div class="sec" style="margin:0">ข้อมูลลูกค้า</div><button class="btn ghost sm" id="edit">${icon('edit')} แก้ไข</button></div>
+  const temp = D.isTempId(c.id) ? `<div class="banner" style="margin-bottom:10px"><b>ร้านนี้ยังไม่มีรหัสจากระบบบัญชี</b> (รหัสชั่วคราว ${esc(c.id)}) ${S.user?.isAdmin ? `<button class="btn sm" id="assign" style="margin-top:8px">ผูกรหัสบัญชี</button>` : '· ให้ผู้ดูแลผูกรหัสเมื่อมีรหัสบัญชี'}</div>` : '';
+  return `${temp}<div class="row between"><div class="sec" style="margin:0">ข้อมูลลูกค้า</div><button class="btn ghost sm" id="edit">${icon('edit')} แก้ไข</button></div>
     <dl class="kv">${row('รหัส', c.id)}${row('ชื่อร้าน', c.name)}${row('ประเภท', c.type)}${row('ผู้ติดต่อ', c.contactName)}${row('เบอร์โทร', phones.join(', '))}${row('LINE', c.lineId)}${row('ที่อยู่', c.address)}${row('เวลาเปิด-ปิด', c.storeHours)}${row('เงื่อนไขชำระ', c.paymentTerm)}${row('เสมียนบิล', c.billClerk)}${row('ป้ายกำกับ', labels.join(', '))}${row('บันทึกก่อนเข้าร้าน', c.keepNote)}${row('หมายเหตุลูกค้า', c.customerNote)}${row('เงื่อนไขพิเศษ', c.specialConditions)}${row('วันเกิด', c.birthday)}${row('แผนที่', c.mapLink)}</dl>
     <div class="sec">เอกสาร / ภาษี</div>
     <dl class="kv">${row('ใบกำกับภาษี', c.taxInvoiceRequired)}${row('ชื่อใบกำกับ', c.taxName)}${row('ที่อยู่ใบกำกับ', c.taxAddress)}${row('สาขา', c.taxBranch)}${row('เลขผู้เสียภาษี', c.taxId)}${row('ใบเสร็จ', c.receiptRequired)}${row('หมายเหตุเอกสาร', c.documentNote)}</dl>`;
@@ -126,21 +130,36 @@ function history(m, c) {
 }
 
 function visitsTab(m, c) {
-  const vs = [...(m.visitsByCust.get(c.id) || [])].reverse();
-  const tasks = (m.tasksByCust.get(c.id) || []);
   const kindOf = v => { try { return JSON.parse(v.data || '{}').kind || ''; } catch { return ''; } };
-  const label = v => D.visitPlanned(v) ? ['นัดหมาย', 'warn'] : kindOf(v) === 'note' ? ['โน้ต', ''] : ['เข้าพบ', 'ok'];
+  const ev = [];
+  for (const v of m.visitsByCust.get(c.id) || []) ev.push({ k: D.visitPlanned(v) ? 'planned' : 'visit', t: v.at || v.plannedAt, v });
+  for (const t of m.tasksByCust.get(c.id) || []) ev.push({ k: String(t.status).toLowerCase() === 'open' ? 'task' : 'taskdone', t: t.completedAt || t.dueAt, v: t });
+  const visitIds = new Set((m.visitsByCust.get(c.id) || []).map(v => v.visitId));
+  const taskIds = new Set((m.tasksByCust.get(c.id) || []).map(t => t.taskId));
+  for (const a of m.activitiesByCust.get(c.id) || []) {
+    if (a.type === 'ลบ' || (a.refType === 'visit' && visitIds.has(a.refId)) || (a.refType === 'task' && taskIds.has(a.refId))) continue;
+    ev.push({ k: 'act', t: a.at, v: a });
+  }
+  ev.sort((a, b) => String(b.t).localeCompare(String(a.t)));
+  const badge = e => ({ visit: ['เข้าพบ', 'ok'], planned: ['นัดหมาย', 'warn'], task: ['ติดตาม', 'warn'], taskdone: ['ติดตามแล้ว', ''], act: [e.v.type, 'gray'] }[e.k]);
   const photos = (m.photosByCust.get(c.id) || []).length;
+  const nVisits = ev.filter(e => e.k === 'visit').length, open = ev.filter(e => e.k === 'task' || e.k === 'planned').length;
+  const row = e => {
+    const [t, cls] = badge(e), v = e.v;
+    const when = e.k === 'task' ? 'นัด ' + fmtDate(v.dueAt) : e.k === 'planned' ? 'นัด ' + fmtDate(v.plannedAt) : fmtDateTime(e.t);
+    const note = e.k === 'task' || e.k === 'taskdone' ? v.note || v.title : v.note;
+    return `<div class="li" style="cursor:default;align-items:flex-start"><div class="grow"><div class="row"><span class="badge ${cls}">${esc(t)}</span><span class="xs faint">${when}</span></div>
+      <div class="sm" style="margin-top:4px;white-space:pre-line">${esc(note || '—')}</div>${v.outcome ? `<div class="xs muted">ผล: ${esc(v.outcome)}</div>` : ''}${e.k === 'visit' && v.lat ? `<div class="xs faint">${icon('pin')} ${(+v.lat).toFixed(4)}, ${(+v.lng).toFixed(4)}</div>` : ''}</div>
+      ${e.k === 'task' ? `<button class="btn ghost sm" data-done="${esc(v.taskId)}">เสร็จแล้ว</button>` : ''}</div>`;
+  };
   const body = `<div class="row"><button class="btn grad grow" data-act="note2">${icon('plus')} บันทึกเข้าพบ / โน้ต / นัดหมาย</button></div>
-    <div class="muted sm" style="margin-top:8px">เข้าพบทั้งหมด ${vs.filter(D.visitDone).length} ครั้ง · รูป ${photos} · งานค้าง ${tasks.filter(t => String(t.status).toLowerCase() === 'open').length}</div>
-    <div class="list" style="margin-top:6px">${vs.map(v => { const [t, cls] = label(v); return `<div class="li" style="cursor:default;align-items:flex-start"><div class="grow"><div class="row"><span class="badge ${cls}">${t}</span><span class="xs faint">${D.visitPlanned(v) ? 'นัด ' + fmtDate(v.plannedAt) : fmtDateTime(v.at || v.completedAt)}</span></div>
-      <div class="sm" style="margin-top:4px">${esc(v.note || '—')}</div>${v.outcome ? `<div class="xs muted">ผล: ${esc(v.outcome)}</div>` : ''}${v.lat ? `<div class="xs faint">${icon('pin')} ${(+v.lat).toFixed(4)}, ${(+v.lng).toFixed(4)}</div>` : ''}</div>
-      ${D.visitPlanned(v) ? `<button class="btn ghost sm" data-done="${esc(v.visitId)}">เสร็จแล้ว</button>` : ''}</div>`; }).join('') || emptyMsg('ยังไม่มีบันทึกเข้าพบ')}</div>`;
+    <div class="muted sm" style="margin-top:8px">เข้าพบ ${nVisits} ครั้ง · รูป ${photos} · งานติดตามค้าง ${open}</div>
+    <div class="list" style="margin-top:6px">${ev.map(row).join('') || emptyMsg('ยังไม่มีบันทึกเข้าพบ')}</div>`;
   return {
     body,
     after(root) {
       root.querySelector('[data-act="note2"]').onclick = () => visitSheet(c.id);
-      root.querySelectorAll('[data-done]').forEach(b => b.onclick = () => completeVisitSheet(vs.find(v => v.visitId === b.dataset.done)));
+      root.querySelectorAll('[data-done]').forEach(b => b.onclick = () => completeTaskSheet((m.tasksByCust.get(c.id) || []).find(t => t.taskId === b.dataset.done)));
     },
   };
 }

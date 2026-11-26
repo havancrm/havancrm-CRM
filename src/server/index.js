@@ -8,7 +8,7 @@ import { OpError } from '../../public/js/shared/ops.js';
 
 // Cloudflare Free allows 50 subrequests per invocation; one op needs <= ~12 Google calls.
 const MAX_OPS_PER_REQUEST = 4;
-const VERSION = '1.0.0+local';
+const VERSION = '1.0.0+f74866c';
 let memStore = null;
 
 function getStore(env) {

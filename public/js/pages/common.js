@@ -6,7 +6,7 @@ export const statusBadge = st => `<span class="badge ${st.status === 'current' ?
 export function custRow(m, c, { extra = '', sub } = {}) {
   const st = D.customerStats(m, c.id);
   const labels = D.custLabels(m, c.id).slice(0, 2).join(' · ');
-  return `<div class="li" data-go="#/c/${encodeURIComponent(c.id)}"><div class="grow"><div class="t ell">${esc(c.name)}</div>
+  return `<div class="li" data-go="#/c/${encodeURIComponent(c.id)}"><div class="grow"><div class="t ell">${esc(c.name)}${D.isTempId(c.id) ? ' <span class="badge warn">ยังไม่มีรหัสบัญชี</span>' : ''}</div>
     <div class="s ell">${esc(c.id)}${labels ? ' · ' + esc(labels) : ''}${sub ? ' · ' + sub : ''}</div></div>
     <div class="r">${extra || statusBadge(st)}${!extra && st.lastDate ? `<div class="xs faint">${fmtDate(st.lastDate)}</div>` : ''}</div></div>`;
 }

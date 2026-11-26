@@ -7,7 +7,7 @@ export default function home({ m }) {
   const [from, to] = D.periodRange('month', m.today);
   const sales = D.salesBetween(m, from, to);
   const sug = D.suggestions(m);
-  const newC = D.customersBy(m, 'new').length;
+  const firstBuy = m.customers.filter(c => D.isFirstPurchaseNew(m, c)).length, reg = m.customers.filter(c => D.isRecentlyRegistered(m, c)).length;
   const withGps = m.customers.filter(D.hasGps).length;
   const labelCounts = new Map();
   for (const rows of m.labels.values()) for (const r of rows) if (r.label) labelCounts.set(r.label, (labelCounts.get(r.label) || 0) + 1);
@@ -24,7 +24,7 @@ export default function home({ m }) {
     </div>
     <div class="tiles">
       ${tile('#/sales', 'report', 'รายงานยอดขาย', `เดือนนี้ ${D.money(sales.total)} ฿`)}
-      ${tile('#/new', 'star', 'ลูกค้าใหม่', `${newC} ร้าน`)}
+      ${tile('#/new', 'star', 'ลูกค้าใหม่', `ซื้อครั้งแรก ${firstBuy} · เพิ่มทะเบียน ${reg}`)}
       ${tile('#/visits?tab=cycle', 'clock', 'รอบลูกค้า', `เลยรอบ ${sug.overdue.length} · ใกล้ ${sug.soon.length}`)}
       ${tile('#/orders?new=1', 'cart', 'รับออเดอร์', 'เริ่มออเดอร์ใหม่')}
       ${tile('#/map', 'map', 'แผนที่', `มีพิกัด ${withGps} ร้าน`)}

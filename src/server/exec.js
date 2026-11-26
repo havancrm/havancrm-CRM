@@ -3,6 +3,8 @@
 import { expandOp, OpError, ADMIN_OPS } from '../../public/js/shared/ops.js';
 import { nowIso, parseJson } from '../../public/js/shared/domain.js';
 
+const normName = s => String(s || '').toLowerCase().replace(/[\s\-_.,()\[\]/\\*]+/g, '');
+const dg = s => String(s || '').replace(/\D+/g, '');
 const clip = (s, n = 1500) => { const t = typeof s === 'string' ? s : JSON.stringify(s); return t.length > n ? t.slice(0, n) + '…' : t; };
 
 async function rowOf(store, tab, col, val) {
@@ -25,6 +27,19 @@ export async function execOp(store, op, ctx) {
   }
   // Photo upload (Drive) happens before expansion so the row carries the file id.
   let ex2 = ex;
+  // order number taken by a different shop on another device -> allocate the next free number
+  let renamedFrom = '';
+  if (op.type === 'order.save') {
+    const [nos, cids] = await Promise.all([store.column('orders', 'no'), store.column('orders', 'customerId')]);
+    const i = nos.indexOf(String(op.payload.order.no));
+    if (i >= 0 && cids[i] !== String(op.payload.order.customerId)) {
+      const m = /^(\d{2})(\d{6})$/.exec(String(op.payload.order.no)); let n = m ? +m[1] : 0; let cand;
+      do { n++; cand = m ? `${String(n).padStart(2, '0')}${m[2]}` : `${op.payload.order.no}-${n}`; } while (nos.includes(cand));
+      renamedFrom = op.payload.order.no;
+      op = { ...op, payload: { ...op.payload, order: { ...op.payload.order, no: cand } } };
+      ex2 = expandOp(op, ctx);
+    }
+  }
   if (op.type === 'photo.add' && op.payload?.imageBase64) {
     const up = await store.uploadPhoto({ base64: op.payload.imageBase64, mime: op.payload.mime || 'image/jpeg', name: `${op.payload.customerId}-${op.opId}.jpg` });
     ex2 = expandOp(op, { ...ctx, fileId: up.fileId, folderId: up.folderId });
@@ -58,6 +73,7 @@ export async function execOp(store, op, ctx) {
         const seen = new Set(), uniq = [];
         for (const r of fresh) { const k = String(r[m.col]); if (!seen.has(k)) { seen.add(k); uniq.push(r); } }
         if (uniq.length) await store.appendRows(m.tab, uniq);
+        if (m.log === 'create') for (const r of uniq) addLog(m.tab, r[m.col], 'เพิ่มลูกค้า', '', JSON.stringify({ name: r.name }));
         break;
       }
       case 'appendUniqueComposite': {
@@ -140,18 +156,39 @@ export async function execOp(store, op, ctx) {
         addLog(m.tab, m.label, 'delete', m.label, `${del.length} rows`);
         break;
       }
+      case 'guardDuplicate': {
+        const [ids, names] = await Promise.all([store.column('customers', 'id'), store.column('customers', 'name')]);
+        const nn = normName(m.name); const hits = [];
+        names.forEach((n, i) => { if (normName(n) === nn) hits.push(`${ids[i]} ${n}`); });
+        if (m.phones.length) {
+          const [pc, pp] = await Promise.all([store.column('customer_phones', 'customerId'), store.column('customer_phones', 'phone')]);
+          const want = m.phones.map(dg).filter(d => d.length >= 8);
+          pp.forEach((p, i) => { if (want.includes(dg(p)) && !hits.some(h => h.startsWith(pc[i] + ' '))) hits.push(`${pc[i]} (เบอร์ ${p})`); });
+        }
+        if (hits.length && !m.force) throw new OpError(`พบร้านซ้ำ: ${hits.slice(0, 3).join(' · ')}`, 'duplicate_customer', { matches: hits.slice(0, 5) });
+        break;
+      }
+      case 'mustNotExist': { if ((await store.column(m.tab, m.col)).includes(String(m.val))) throw new OpError(m.message || 'มีอยู่แล้ว', 'already_exists'); break; }
+      case 'updateAll': {
+        const col = await store.column(m.tab, m.col); const list = [];
+        col.forEach((v, i) => { if (v === m.from) list.push({ row: i + 2, patch: { [m.col]: m.to } }); });
+        await store.updateRows(m.tab, list);
+        if (list.length) addLog(m.tab, m.from, 'ผูกรหัส', `${list.length} rows`, m.to);
+        break;
+      }
+      case 'logOnly': addLog(m.entity, m.id, m.action, m.before, m.after); break;
       default: throw new OpError(`mutation ไม่รู้จัก ${m.op}`);
     }
   }
   if (log.length) await store.appendRows('changes', log);
-  return { opId: op.opId, status: 'ok', ...ex2.result };
+  return { opId: op.opId, status: 'ok', ...ex2.result, ...(renamedFrom ? { renamedFrom, no: op.payload.order.no } : {}) };
 }
 
 export async function execBatch(store, ops, ctx) {
   const results = [];
   for (const op of ops) {
     try { results.push(await execOp(store, op, ctx)); }
-    catch (e) { results.push({ opId: op?.opId, status: 'error', code: e.code || 'server_error', message: e instanceof OpError ? e.message : `ผิดพลาดที่เซิร์ฟเวอร์: ${String(e.message).slice(0, 160)}` }); }
+    catch (e) { results.push({ opId: op?.opId, status: 'error', code: e.code || 'server_error', extra: e.extra, message: e instanceof OpError ? e.message : `ผิดพลาดที่เซิร์ฟเวอร์: ${String(e.message).slice(0, 160)}` }); }
   }
   return results;
 }

@@ -2,7 +2,7 @@ import * as D from '../shared/domain.js';
 import { esc, icon, fmtDate, debounce, sheet } from '../ui.js';
 import { custRow, emptyMsg, pager, bindPager } from './common.js';
 
-const ST = { draft: ['ร่าง', 'warn'], confirmed: ['ยืนยันแล้ว', 'ok'], cancelled: ['ยกเลิก', 'gray'] };
+const ST = { 'ร่าง': ['ร่าง', 'warn'], 'รอส่ง': ['รอส่ง', 'warn'], 'ส่งแล้ว': ['ส่งแล้ว', 'ok'], 'ยกเลิก': ['ยกเลิก', 'gray'] };
 
 export function pickCustomerSheet(m, onPick) {
   const s = sheet(`<div class="row between"><h3 style="margin:0">เลือกลูกค้า</h3><button class="btn ghost sm" data-close>ปิด</button></div>
@@ -19,11 +19,11 @@ export function pickCustomerSheet(m, onPick) {
 export default function orders({ m, query }) {
   const f = query.f || 'all', q = query.q || '';
   const all = [...m.orders].sort((a, b) => (String(b.updatedAt) > String(a.updatedAt) ? 1 : -1));
-  const counts = { all: all.length, draft: 0, confirmed: 0, cancelled: 0 };
+  const counts = { all: all.length, 'ร่าง': 0, 'รอส่ง': 0, 'ส่งแล้ว': 0, 'ยกเลิก': 0 };
   for (const o of all) counts[o.status] = (counts[o.status] || 0) + 1;
   const html = `<div class="stack"><button class="btn grad block" id="no">${icon('plus')} ออเดอร์ใหม่</button>
     <label class="search">${icon('search')}<input id="oq" type="search" value="${esc(q)}" placeholder="ค้นหาเลขที่ออเดอร์ ชื่อ/รหัสลูกค้า" autocomplete="off"></label>
-    <div class="chips">${[['all', 'ทั้งหมด'], ['draft', 'ร่าง'], ['confirmed', 'ยืนยันแล้ว'], ['cancelled', 'ยกเลิก']].map(([k, t]) => `<button class="chip ${f === k ? 'on' : ''}" data-f="${k}">${t} ${counts[k] || 0}</button>`).join('')}</div>
+    <div class="chips">${[['all', 'ทั้งหมด'], ['ร่าง', 'ร่าง'], ['รอส่ง', 'รอส่ง'], ['ส่งแล้ว', 'ส่งแล้ว'], ['ยกเลิก', 'ยกเลิก']].map(([k, t]) => `<button class="chip ${f === k ? 'on' : ''}" data-f="${k}">${t} ${counts[k] || 0}</button>`).join('')}</div>
     <div id="ol"></div></div>`;
   return {
     html, title: 'ออเดอร์',
@@ -42,7 +42,7 @@ export default function orders({ m, query }) {
       };
       draw();
       inp.addEventListener('input', debounce(draw));
-      root.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { location.hash = `#/orders?f=${b.dataset.f}`; });
+      root.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { location.hash = `#/orders?f=${encodeURIComponent(b.dataset.f)}`; });
       const start = () => pickCustomerSheet(m, id => { location.hash = `#/order/new?c=${encodeURIComponent(id)}`; });
       root.querySelector('#no').onclick = start;
       if (query.new) { history.replaceState(null, '', '#/orders'); start(); }

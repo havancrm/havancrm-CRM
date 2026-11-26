@@ -2,6 +2,12 @@
 
 > สถานะ: **ยังไม่ได้ Deploy** — ต้องใช้บัญชี Cloudflare / Google Cloud ของเจ้าของระบบ (ผมไม่มีข้อมูลรับรองเหล่านี้ใน session นี้)
 
+## 0) Preview ชั่วคราว (ข้อมูลจำลอง ไม่แตะชีตจริง)
+```bash
+npx wrangler deploy --temporary --var DATA_MODE:memory --var AUTH_MODE:dev --var GOOGLE_CLIENT_ID:
+```
+ได้ URL `*.workers.dev` บนบัญชีชั่วคราว ต้อง claim ภายใน ~1 ชั่วโมง (ลิงก์ claim อยู่ในผลคำสั่ง). **ห้ามใช้โหมดนี้กับชีตจริง** — `AUTH_MODE=dev` ถูกปฏิเสธอัตโนมัติเมื่อ `DATA_MODE=sheets`
+
 ## 1) Google (ครั้งเดียว)
 1. Google Cloud Console → สร้างโปรเจกต์ → เปิดใช้ **Google Sheets API** และ **Google Drive API**
 2. สร้าง **Service Account** → สร้าง JSON key → เก็บ `client_email` และ `private_key`

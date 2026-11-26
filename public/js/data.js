@@ -4,6 +4,7 @@ import { rowsToObjects, tabFromRange, checkHeaders, CORE_TABS } from './shared/s
 import { expandOp, applyMutationsLocal } from './shared/ops.js';
 import { uuid } from './ui.js';
 
+export const UNITS = {};            // product code -> unit (from the accounting price list; units only, no prices)
 export const S = {
   health: null, user: null, raw: null, model: null, queue: [], failed: [], online: navigator.onLine,
   syncing: false, lastSync: 0, schemaIssues: [], listeners: new Set(), token: '', deviceId: '',
@@ -147,6 +148,7 @@ export async function init() {
     if (!h || e.status !== 0) throw e; S.health = h; S.online = false;
   }
   S.token = sessionStorage.getItem('idt') || '';
+  fetch('/data/units.json').then(r => (r.ok ? r.json() : {})).then(j => Object.assign(UNITS, j)).catch(() => {});
   await loadQueue();
   window.addEventListener('online', () => { S.online = true; emit(); flush().catch(() => {}); });
   window.addEventListener('offline', () => { S.online = false; emit(); });

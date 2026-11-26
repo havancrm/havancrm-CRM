@@ -1,13 +1,15 @@
 import * as D from '../shared/domain.js';
 import { esc, icon, debounce } from '../ui.js';
 import { custRow, pager, bindPager, emptyMsg } from './common.js';
+import { newCustomerSheet } from './forms.js';
 
-const FILTERS = [['all', 'ทั้งหมด'], ['current', 'ปัจจุบัน'], ['lapsed', 'ห่างหาย'], ['closed', 'เลิกกิจการ'], ['new', 'ใหม่']];
+const FILTERS = [['all', 'ทั้งหมด'], ['current', 'ปัจจุบัน'], ['lapsed', 'ห่างหาย'], ['closed', 'เลิกกิจการ'], ['new', 'ใหม่'], ['temp', 'ยังไม่มีรหัสบัญชี']];
 
 export default function customers({ m, query }) {
   const label = query.label || '', q = query.q || '';
   const f0 = query.f || 'all';
   const html = `<div class="stack">
+    <button class="btn grad block" id="addc">${icon('plus')} เพิ่มร้านใหม่</button>
     <label class="search">${icon('search')}<input id="cq" type="search" value="${esc(q)}" placeholder="ค้นหาลูกค้า ชื่อ รหัส เบอร์ ป้ายกำกับ" autocomplete="off"></label>
     <div class="chips">${FILTERS.map(([k, t]) => `<button class="chip ${f0 === k ? 'on' : ''}" data-f="${k}">${t}</button>`).join('')}</div>
     ${label ? `<div class="row"><span class="badge">ป้าย: ${esc(label)}</span><button class="btn ghost sm" id="clr">ล้างป้าย</button></div>` : ''}
@@ -30,6 +32,7 @@ export default function customers({ m, query }) {
         bindPager(list, rows, c => custRow(m, c), { id: 'cl' });
       };
       draw();
+      root.querySelector('#addc').onclick = () => newCustomerSheet();
       inp.addEventListener('input', debounce(() => { upd({ q: inp.value.trim() }); draw(); }));
       root.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { upd({ f: b.dataset.f }); root.querySelectorAll('[data-f]').forEach(x => x.classList.toggle('on', x === b)); draw(); });
       root.querySelector('#clr')?.addEventListener('click', () => { location.hash = '#/customers' + ((query.f || 'all') !== 'all' ? `?f=${query.f}` : ''); });

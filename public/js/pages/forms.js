@@ -23,13 +23,13 @@ export function visitSheet(customerId, { kind = 'visit' } = {}) {
   const apply = () => {
     s.el.querySelectorAll('#vk button').forEach(b => b.classList.toggle('on', b.dataset.k === cur));
     q('#ow').classList.toggle('hide', cur !== 'visit'); q('#dw').classList.toggle('hide', cur !== 'appointment');
-    q('#gw').classList.toggle('hide', cur === 'appointment'); q('#pw').classList.toggle('hide', cur === 'appointment');
+    q('#gw').classList.toggle('hide', cur !== 'visit'); q('#pw').classList.toggle('hide', cur !== 'visit');
     q('#vg').checked = cur === 'visit';
     q('#nl').textContent = cur === 'appointment' ? 'เรื่องที่นัด / สิ่งที่ต้องทำ' : cur === 'note' ? 'โน้ต' : 'รายละเอียดการเข้าพบ';
     q('#vs').textContent = cur === 'appointment' ? 'บันทึกนัดหมาย' : 'บันทึก';
   };
   const probe = async () => {
-    if (cur === 'appointment' || !q('#vg').checked) { q('#gs').textContent = ''; return; }
+    if (cur !== 'visit' || !q('#vg').checked) { q('#gs').textContent = ''; return; }
     q('#gs').textContent = 'กำลังอ่านพิกัด…';
     try {
       gps = await getGps(); skipGps = false;
@@ -46,30 +46,28 @@ export function visitSheet(customerId, { kind = 'visit' } = {}) {
     const note = q('#vn').value.trim();
     if (cur === 'note' && !note) return toast('กรุณาพิมพ์โน้ต');
     if (cur === 'appointment' && !q('#vd').value) return toast('กรุณาเลือกวันที่นัด');
-    if (cur !== 'appointment' && q('#vg').checked && !gps && !skipGps) { await probe(); if (!gps) return; }
+    if (cur === 'visit' && q('#vg').checked && !gps && !skipGps) { await probe(); if (!gps) return; }
     const btn = q('#vs'); btn.disabled = true;
     try {
       const p = { customerId, kind: cur, note, outcome: q('#vo')?.value || '' };
       if (cur === 'appointment') p.plannedAt = q('#vd').value;
-      else if (q('#vg').checked && gps) Object.assign(p, { lat: gps.lat, lng: gps.lng, accuracy: gps.accuracy });
+      else if (cur === 'visit' && q('#vg').checked && gps) Object.assign(p, { lat: gps.lat, lng: gps.lng, accuracy: gps.accuracy });
       const op = await enqueue('visit.log', p);
-      if (photo && cur !== 'appointment') await enqueue('photo.add', { customerId, visitId: `V-${op.opId}`, photoType: 'visit', imageBase64: photo.base64, mime: photo.mime, ...(gps && q('#vg').checked ? { lat: gps.lat, lng: gps.lng } : {}) });
+      if (photo && cur === 'visit') await enqueue('photo.add', { customerId, visitId: `V-${op.opId}`, photoType: 'visit', imageBase64: photo.base64, mime: photo.mime, ...(gps && q('#vg').checked ? { lat: gps.lat, lng: gps.lng } : {}) });
       s.close(); toast(cur === 'appointment' ? 'บันทึกนัดหมายแล้ว' : 'บันทึกแล้ว');
     } catch (e) { toast(errMsg(e)); btn.disabled = false; }
   };
   return s;
 }
 
-export function completeVisitSheet(visit) {
-  const s = sheet(`<h3>ทำนัดหมายเสร็จ</h3><div class="stack">
-    <div class="muted sm">${esc(visit.note || 'นัดหมาย')} · นัด ${esc(String(visit.plannedAt).slice(0, 10))}</div>
-    <label class="field"><span>ผลการเข้าพบ / โน้ต</span><textarea class="inp" id="cn"></textarea></label>
-    <label class="row"><input type="checkbox" id="cg" checked> <span>แนบพิกัด GPS</span></label>
+export function completeTaskSheet(task) {
+  const s = sheet(`<h3>ทำงานติดตามเสร็จ</h3><div class="stack">
+    <div class="muted sm">${esc(task.note || task.title || 'ติดตาม')} · นัด ${esc(String(task.dueAt).slice(0, 10))}</div>
+    <label class="field"><span>ผลการติดตาม / โน้ต (ไม่บังคับ)</span><textarea class="inp" id="cn"></textarea></label>
     <button class="btn grad block" id="cs">บันทึกว่าเสร็จแล้ว</button></div>`);
   s.el.querySelector('#cs').onclick = async e => {
-    e.target.disabled = true; let gps = null;
-    if (s.el.querySelector('#cg').checked) { try { gps = await getGps(); } catch (er) { toast(errMsg(er) + ' — บันทึกโดยไม่มีพิกัด'); } }
-    try { await enqueue('visit.complete', { visitId: visit.visitId, customerId: visit.customerId, note: s.el.querySelector('#cn').value.trim(), ...(gps ? { lat: gps.lat, lng: gps.lng } : {}) }); s.close(); toast('บันทึกแล้ว'); }
+    e.target.disabled = true;
+    try { await enqueue('task.complete', { taskId: task.taskId, customerId: task.customerId, base: task.note, note: s.el.querySelector('#cn').value.trim() }); s.close(); toast('บันทึกแล้ว'); }
     catch (er) { toast(errMsg(er)); e.target.disabled = false; }
   };
 }
@@ -148,5 +146,67 @@ export function editCustomerSheet(customerId) {
       if (lb.join('|') !== labels.join('|')) { await enqueue('customer.labels', { customerId, labels: lb }); n++; }
       s.close(); toast(n ? 'บันทึกแล้ว' : 'ไม่มีการเปลี่ยนแปลง');
     } catch (er) { toast(errMsg(er)); e.target.disabled = false; }
+  };
+}
+
+// ---------------- create a shop in the field ----------------
+export function newCustomerSheet({ onDone } = {}) {
+  const m = S.model;
+  const types = [...new Set(m.customers.map(c => c.type).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+  const terms = [...new Set(m.customers.map(c => c.paymentTerm).filter(Boolean))];
+  const allLabels = [...new Set([...m.labels.values()].flat().map(l => l.label).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+  let gps = null;
+  const s = sheet(`<div class="row between"><h3 style="margin:0">เพิ่มร้านใหม่</h3><button class="btn ghost sm" data-close>ปิด</button></div>
+    <div class="banner" style="margin:10px 0;background:var(--blue-soft);color:var(--ink)">ร้านที่เพิ่มในภาคสนามจะได้ <b>รหัสชั่วคราว N-…</b> ยังไม่ใช่รหัสจากระบบบัญชี เมื่อมีรหัสบัญชีแล้วให้ผู้ดูแลกด “ผูกรหัสบัญชี”</div>
+    <div class="stack">
+    <label class="field"><span>ชื่อร้าน *</span><input class="inp" id="nn" autocomplete="off" placeholder="เช่น ส. ตัวอย่าง ซาลอน (ลาดพร้าว)"></label>
+    <label class="field"><span>เบอร์โทร (บรรทัดละเบอร์)</span><textarea class="inp" id="np" style="min-height:60px" inputmode="tel"></textarea></label>
+    <div id="nd"></div>
+    <label class="field"><span>ประเภทร้าน</span><input class="inp" id="nt" list="n-types" placeholder="เช่น ร้านเสริมสวย"></label><datalist id="n-types">${types.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    <label class="field"><span>ที่อยู่ / เส้นทาง</span><textarea class="inp" id="na" style="min-height:60px"></textarea></label>
+    <label class="field"><span>ผู้ติดต่อ</span><input class="inp" id="nc"></label>
+    <label class="field"><span>เงื่อนไขชำระ</span><input class="inp" id="ny" list="n-terms" value="เงินสด"></label><datalist id="n-terms">${terms.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    <label class="field"><span>ป้ายกำกับ (คั่นด้วยจุลภาค)</span><input class="inp" id="nl" list="n-lbl"></label><datalist id="n-lbl">${allLabels.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    <label class="field"><span>หมายเหตุ</span><input class="inp" id="nm"></label>
+    <div class="card soft"><div class="row between"><div class="sm" id="ng">พิกัดร้าน: ยังไม่ได้บันทึก (ไม่บังคับ)</div><button class="btn ghost sm" id="nb">${icon('pin')} ใช้ตำแหน่งนี้</button></div></div>
+    <label class="row hide" id="nfw"><input type="checkbox" id="nf"> <span class="sm">ยืนยันว่าเป็นคนละร้านกับที่พบ</span></label>
+    <button class="btn grad block" id="ns">บันทึกร้านใหม่</button></div>`);
+  const q = x => s.el.querySelector(x);
+  let dups = [];
+  const check = () => {
+    const phones = q('#np').value.split('\n').map(x => x.trim()).filter(Boolean);
+    dups = q('#nn').value.trim().length >= 2 || phones.length ? D.findDuplicateCustomers(m, { name: q('#nn').value, phones }) : [];
+    q('#nd').innerHTML = dups.length ? `<div class="banner ${dups.some(d => d.hard) ? 'bad' : ''}"><b>พบร้านที่อาจซ้ำ</b>${dups.slice(0, 4).map(d => `<div class="sm" style="margin-top:4px"><a href="#/c/${encodeURIComponent(d.c.id)}" data-close>${esc(d.c.name)}</a> · ${esc(d.c.id)} · ${d.reasons.join(', ')}</div>`).join('')}</div>` : '';
+    q('#nfw').classList.toggle('hide', !dups.some(d => d.hard));
+  };
+  q('#nn').addEventListener('input', check); q('#np').addEventListener('input', check);
+  q('#nb').onclick = async e => { e.target.disabled = true; q('#ng').textContent = 'กำลังอ่านพิกัด…'; try { gps = await getGps(); q('#ng').textContent = `พิกัดพร้อม ${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)} (±${gps.accuracy} ม.)`; } catch (er) { q('#ng').innerHTML = `<span style="color:var(--bad)">${esc(errMsg(er))}</span>`; } e.target.disabled = false; };
+  q('#ns').onclick = async e => {
+    const name = q('#nn').value.trim(); if (name.length < 2) return toast('กรุณาใส่ชื่อร้าน');
+    const hard = dups.some(d => d.hard); if (hard && !q('#nf').checked) return toast('พบร้านซ้ำ — ตรวจรายการด้านบนก่อน');
+    e.target.disabled = true;
+    try {
+      const payload = { name, type: q('#nt').value.trim(), address: q('#na').value.trim(), contactName: q('#nc').value.trim(), paymentTerm: q('#ny').value.trim(), phones: q('#np').value.split('\n').map(x => x.trim()).filter(Boolean), labels: q('#nl').value.split(',').map(x => x.trim()).filter(Boolean), customerNote: q('#nm').value.trim(), force: hard && q('#nf').checked };
+      if (gps) Object.assign(payload, { lat: gps.lat, lng: gps.lng, accuracy: gps.accuracy });
+      const op = await enqueue('customer.create', payload);
+      const id = D.tempCustomerId(op.opId, op.at);
+      s.close(); toast('เพิ่มร้านใหม่แล้ว'); (onDone || (cid => { location.hash = `#/c/${encodeURIComponent(cid)}`; }))(id);
+    } catch (er) { toast(errMsg(er)); e.target.disabled = false; }
+  };
+}
+
+export function assignCodeSheet(customerId) {
+  const m = S.model, c = m.custById.get(customerId);
+  const s = sheet(`<h3>ผูกรหัสบัญชี</h3><div class="stack"><div class="muted sm">${esc(c?.name || '')} · รหัสชั่วคราว ${esc(customerId)}</div>
+    <label class="field"><span>รหัสลูกค้าจากระบบบัญชี</span><input class="inp" id="ac" inputmode="text" autocomplete="off" placeholder="เช่น 98765"></label><div id="am" class="sm"></div>
+    <div class="xs muted">ระบบจะเปลี่ยนรหัสในทุกแท็บที่อ้างถึงร้านนี้ (ลูกค้า เบอร์ ป้าย บิล ออเดอร์ เข้าพบ งาน กิจกรรม พิกัด รูป) และจดบันทึกในแท็บ changes</div>
+    <button class="btn grad block" id="as">ผูกรหัส</button></div>`);
+  const inp = s.el.querySelector('#ac');
+  inp.addEventListener('input', () => { const v = inp.value.trim(); const ex = m.custById.get(v); s.el.querySelector('#am').innerHTML = ex ? `<span style="color:var(--bad)">รหัสนี้มีแล้ว: ${esc(ex.name)}</span>` : ''; });
+  s.el.querySelector('#as').onclick = async e => {
+    const to = inp.value.trim(); if (!to) return toast('กรุณาใส่รหัส'); if (m.custById.has(to)) return toast('รหัสนี้มีในระบบแล้ว');
+    e.target.disabled = true;
+    try { await enqueue('customer.assignCode', { customerId, newId: to }); s.close(); toast('ผูกรหัสแล้ว'); setTimeout(() => { location.hash = `#/c/${encodeURIComponent(to)}`; }, 400); }
+    catch (er) { toast(errMsg(er)); e.target.disabled = false; }
   };
 }

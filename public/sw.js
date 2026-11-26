@@ -1,7 +1,7 @@
 // Service worker: cache the app shell by VERSION. API calls are NEVER cached (data must be live).
-const VERSION = '1.0.0+local';
+const VERSION = '1.0.0+f74866c';
 const CACHE = `havan-crm-${VERSION}`;
-const SHELL = ['/', '/index.html', '/css/app.css', '/manifest.webmanifest', '/icon.svg'];
+const SHELL = ['/', '/index.html', '/css/app.css', '/manifest.webmanifest', '/icon.svg', '/img/slip-template.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('havan-crm-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {

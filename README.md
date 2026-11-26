@@ -32,8 +32,9 @@ docs/DEPLOY.md          ขั้นตอน Preview/Deploy      docs/REPORT.md
 
 ```bash
 npm install
-npm test            # ทดสอบหน่วย (49)
+npm test            # ทดสอบหน่วย (67)
 npm run dev         # Preview ในเครื่อง: ข้อมูลจำลองในหน่วยความจำ ไม่แตะชีตจริง  http://localhost:8787
-npm run test:e2e    # E2E บน Chromium มือถือ (53 ขั้นตอน)
+npm run test:e2e    # E2E บน Chromium มือถือ (59 ขั้นตอน)
+REAL_DIR=/path node --test test/real   # ทดสอบกับสำเนาข้อมูลจริง + TTX จริง (ไฟล์ส่วนตัว ไม่อยู่ใน repo)
 npm run check       # stamp version + unit + e2e
 ```

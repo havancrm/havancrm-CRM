@@ -1,9 +1,10 @@
 // Order taking. The cart lives in localStorage on every change, so Back / reload / losing signal never loses it.
 import * as D from '../shared/domain.js';
 import { esc, icon, fmtDate, toast, sheet, confirmBox, debounce } from '../ui.js';
-import { S, enqueue } from '../data.js';
+import { S, enqueue, UNITS } from '../data.js';
 import { emptyMsg, pager, bindPager } from './common.js';
 import { pickCustomerSheet } from './orders.js';
+import { slipHtml } from '../slip.js';
 
 const SRC = [['last', 'บิลล่าสุด'], ['bills', 'บิลย้อนหลัง'], ['regular', 'สั่งประจำ'], ['all', 'ทั้งหมด']];
 const load = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
@@ -38,14 +39,14 @@ export default function order({ m, params, query }) {
   if (!cart) {
     cart = existing
       ? { no: existing.no, customerId: cid, paymentTerm: existing.paymentTerm, note: existing.note, vatMode: existing.vatMode || 'NONE', status: existing.status, lines: (m.orderItems.get(existing.no) || []).map(i => ({ code: i.code, name: i.name, qty: D.num(i.qty), price: D.num(i.price), unit: i.unit })) }
-      : { no: '', customerId: cid, paymentTerm: c?.paymentTerm || 'เงินสด', note: '', vatMode: 'NONE', status: 'draft', lines: [] };
+      : { no: '', customerId: cid, paymentTerm: c?.paymentTerm || 'เงินสด', note: '', vatMode: 'NONE', status: D.ORDER_ST.draft, lines: [] };
   }
   const pidx = priceIndex(m, cid);
   const persist = () => store(cartKey, cart);
   const addLine = (p, qty) => {
     qty = D.num(qty) || 1;
     const ex = cart.lines.find(l => l.code === p.code && D.num(l.price) === D.num(p.price));
-    if (ex) ex.qty = D.num(ex.qty) + qty; else cart.lines.push({ code: p.code, name: p.name, qty, price: D.num(p.price), unit: p.unit || '' });
+    if (ex) ex.qty = D.num(ex.qty) + qty; else cart.lines.push({ code: p.code, name: p.name, qty, price: D.num(p.price), unit: p.unit || UNITS[p.code] || '' });
     persist();
   };
   // pre-fill from a past bill (re-order). Unregistered lines are skipped, never guessed.
@@ -128,7 +129,7 @@ export default function order({ m, params, query }) {
   function cartHtml() {
     const total = D.cartTotal(cart.lines);
     return `<div class="stack"><div class="row between"><div class="b ell">${esc(title)}</div><span class="xs faint">${esc(cid)}</span></div>
-      ${existing?.status === 'confirmed' ? `<div class="banner">ออเดอร์นี้ยืนยันแล้ว การบันทึกจะอัปเดตออเดอร์เดิม</div>` : ''}
+      ${[D.ORDER_ST.pending, D.ORDER_ST.delivered].includes(existing?.status) ? `<div class="banner">ออเดอร์นี้ยืนยันแล้ว การบันทึกจะอัปเดตออเดอร์เดิม</div>` : ''}
       <div id="cl"></div>
       <div class="row between"><span class="b">ยอดรวม</span><span class="b num" style="font-size:20px" id="ct">${D.money(total)} ฿</span></div>
       <div class="xs faint">ยอดรวม = จำนวน × ราคา ของแต่ละรายการ ระบบไม่บวกภาษีเพิ่ม</div>
@@ -158,30 +159,38 @@ export default function order({ m, params, query }) {
     const save = async status => {
       sync();
       const p = build(status);
-      if (status === 'confirmed' && !p.lines.length) return toast('ยังไม่มีสินค้าในตะกร้า');
+      if (status === D.ORDER_ST.pending && !p.lines.length) return toast('ยังไม่มีสินค้าในตะกร้า');
       const zero = p.lines.filter(l => D.num(l.price) === 0);
-      if (status === 'confirmed' && zero.length && !(await confirmBox(`มี ${zero.length} รายการราคา 0 บาท (แถม/ยังไม่กรอกราคา) ยืนยันต่อหรือไม่?`))) return;
-      if (!cart.no) { cart.no = D.newOrderNo(Date.now(), S.deviceId); persist(); p.order.no = cart.no; }
+      if (status === D.ORDER_ST.pending && zero.length && !(await confirmBox(`มี ${zero.length} รายการราคา 0 บาท (แถม/ยังไม่กรอกราคา) ยืนยันต่อหรือไม่?`))) return;
+      if (!cart.no) { cart.no = D.newOrderNo(S.model.orders); persist(); p.order.no = cart.no; }
       try {
         await enqueue('order.save', p);
         localStorage.removeItem(cartKey);
-        if (status === 'confirmed') { docSheet(p.order, p.lines, () => { location.hash = '#/orders'; }); toast('ยืนยันออเดอร์แล้ว'); }
-        else { toast(status === 'cancelled' ? 'ยกเลิกออเดอร์แล้ว' : 'บันทึกร่างแล้ว'); location.hash = '#/orders'; }
+        if (status === D.ORDER_ST.pending) { docSheet(p.order, p.lines, () => { location.hash = '#/orders'; }); toast('ยืนยันออเดอร์แล้ว'); }
+        else { toast(status === D.ORDER_ST.cancelled ? 'ยกเลิกออเดอร์แล้ว' : 'บันทึกร่างแล้ว'); location.hash = '#/orders'; }
       } catch (er) { toast(er.message); }
     };
-    root.querySelector('#sd').onclick = () => save('draft');
-    root.querySelector('#sc').onclick = () => save('confirmed');
-    root.querySelector('#doc').onclick = () => { sync(); docSheet({ ...build(cart.status || 'draft').order, no: cart.no || '(ยังไม่บันทึก)' }, build('draft').lines); };
-    root.querySelector('#cx')?.addEventListener('click', async () => { if (await confirmBox('ยกเลิกออเดอร์นี้?', 'ยกเลิกออเดอร์')) save('cancelled'); });
+    root.querySelector('#sd').onclick = () => save(D.ORDER_ST.draft);
+    root.querySelector('#sc').onclick = () => save(D.ORDER_ST.pending);
+    root.querySelector('#doc').onclick = () => { sync(); docSheet({ ...build(cart.status || D.ORDER_ST.draft).order, no: cart.no || '(ยังไม่บันทึก)' }, build(D.ORDER_ST.draft).lines); };
+    root.querySelector('#cx')?.addEventListener('click', async () => { if (await confirmBox('ยกเลิกออเดอร์นี้?', 'ยกเลิกออเดอร์')) save(D.ORDER_ST.cancelled); });
     root.querySelector('#clr')?.addEventListener('click', async () => { if (await confirmBox('ล้างตะกร้าทั้งหมด?', 'ล้าง')) { cart.lines = []; persist(); drawLines(); upd(); } });
   }
   function docSheet(o, lines, onClose) {
+    const modeSales = (() => { const c2 = new Map(); for (const b of m.bills) if (b.salesperson) c2.set(b.salesperson, (c2.get(b.salesperson) || 0) + 1); return [...c2.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''; })();
+    let showCode = false;
+    const html = () => slipHtml(o, lines, c, { showCode, salesperson: modeSales, phones: D.custPhones(m, cid), tempCode: D.isTempId(cid), units: UNITS });
     const txt = D.orderDocText(m, o, lines);
-    const s = sheet(`<div class="row between"><h3 style="margin:0">เอกสารส่งสินค้า</h3><button class="btn ghost sm" data-close>ปิด</button></div>
-      <pre id="dt" style="white-space:pre-wrap;font-family:inherit;background:var(--bg-soft);border-radius:12px;padding:12px;margin:12px 0;font-size:14px">${esc(txt)}</pre>
-      <div class="row"><button class="btn line grow" id="dc">คัดลอก</button><button class="btn line grow" id="dp">พิมพ์</button><button class="btn grad grow" id="ds">แชร์</button></div>`, { onClose });
+    const s = sheet(`<div class="row between"><h3 style="margin:0">ใบส่งสินค้าชั่วคราว</h3><button class="btn ghost sm" data-close>ปิด</button></div>
+      <div class="slipbox" id="sb" style="margin:10px 0">${html()}</div>
+      <label class="row sm" style="margin-bottom:8px"><input type="checkbox" id="zm"> <span>ขยายดู (เลื่อนในกรอบได้)</span></label>
+      <label class="row sm" style="margin-bottom:10px"><input type="checkbox" id="sc2"> <span>พิมพ์รหัสสินค้าในช่องรหัส (ค่าเริ่มต้น: เว้นว่าง)</span></label>
+      <div class="row"><button class="btn line grow" id="dc">คัดลอก</button><button class="btn line grow" id="dp">พิมพ์/PDF</button><button class="btn grad grow" id="ds">แชร์</button></div>`, { onClose });
+    const box = s.el.querySelector('#sb');
+    s.el.querySelector('#zm').onchange = e => box.classList.toggle('zoom', e.target.checked);
+    s.el.querySelector('#sc2').onchange = e => { showCode = e.target.checked; box.innerHTML = html(); };
     s.el.querySelector('#dc').onclick = async () => { try { await navigator.clipboard.writeText(txt); toast('คัดลอกแล้ว'); } catch { toast('คัดลอกไม่ได้'); } };
     s.el.querySelector('#ds').onclick = async () => { if (navigator.share) { try { await navigator.share({ text: txt }); } catch {} } else { try { await navigator.clipboard.writeText(txt); toast('คัดลอกแล้ว (อุปกรณ์ไม่รองรับการแชร์)'); } catch {} } };
-    s.el.querySelector('#dp').onclick = () => { const pa = document.createElement('div'); pa.id = 'pa'; pa.style.whiteSpace = 'pre-wrap'; pa.textContent = txt; document.body.appendChild(pa); window.print(); setTimeout(() => pa.remove(), 500); };
+    s.el.querySelector('#dp').onclick = () => { const pa = document.createElement('div'); pa.id = 'pa'; pa.className = 'slipbox'; pa.innerHTML = html(); document.body.appendChild(pa); window.print(); setTimeout(() => pa.remove(), 800); };
   }
 }

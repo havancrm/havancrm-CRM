@@ -4,7 +4,7 @@ import { esc, icon, fmtDate, fmtDateTime, toast, confirmBox, sheet, download, de
 import { S, api, enqueue, flush, retryFailed, discardOp, refresh, clearCache, logout, pendingCount } from '../data.js';
 import { VERSION } from '../version.js';
 import { emptyMsg, pager, bindPager, openBill } from './common.js';
-import { parseTtx, analyze, decodeBuffer } from '../ttx.js';
+import { parseBills, parseCustomers, analyzeBills, analyzeCustomers, decodeBuffer, detectKind, sha256Hex } from '../ttx.js';
 
 const back = '<div style="height:0"></div>';
 const adminOnly = () => (S.user?.isAdmin ? '' : `<div class="banner">ฟังก์ชันนี้สำหรับผู้ดูแลระบบ (ตั้ง role = admin ในแท็บ ACCESS)</div>`);
@@ -36,7 +36,8 @@ function index({ m }) {
 
 // ---------------- cycle settings ----------------
 function cycle({ m }) {
-  const f = [['lateDays', 'ลูกค้าห่างหาย เมื่อไม่ซื้อเกิน (วัน)', 'ปัจจุบัน = ซื้อภายในกี่วัน'], ['dormDays', 'ถือว่าหลับยาว เมื่อไม่ซื้อเกิน (วัน)', ''], ['visitDef', 'ควรเข้าพบทุก (วัน)', 'ใช้คำนวณ “ขาดเข้าพบ”'], ['soonDays', 'แจ้ง “ใกล้ถึงรอบซื้อ” ล่วงหน้า (วัน)', ''], ['minCycleBills', 'จำนวนวันที่ซื้ออย่างน้อยก่อนคำนวณรอบ', 'น้อยกว่านี้จะไม่เดารอบ'], ['newDays', 'ลูกค้าใหม่ = ซื้อครั้งแรกภายใน (วัน)', '']];
+  const OLD = 'ค่าเดิมของ aCRM (แถว rules ในแท็บ systemSettings)', NEW = 'ค่าตั้งต้นของ CRM ใหม่ — ไม่มีในฐาน aCRM เดิม ยังไม่ได้ยืนยัน ปรับได้';
+  const f = [['lateDays', 'ลูกค้าห่างหาย เมื่อไม่ซื้อเกิน (วัน)', `ปัจจุบัน = ซื้อภายในกี่วัน · ${OLD}`], ['dormDays', 'ถือว่าหลับยาว เมื่อไม่ซื้อเกิน (วัน)', OLD], ['visitDef', 'ควรเข้าพบทุก (วัน)', `ใช้คำนวณ “ขาดเข้าพบ” · ${OLD}`], ['soonDays', 'แจ้ง “ใกล้ถึงรอบซื้อ” ล่วงหน้า (วัน)', NEW], ['minCycleBills', 'จำนวนวันที่ซื้ออย่างน้อยก่อนคำนวณรอบ', `น้อยกว่านี้จะไม่เดารอบ · ${NEW}`], ['newDays', 'ลูกค้าใหม่ = ภายใน (วัน)', NEW]];
   return {
     title: 'รอบซื้อ / ลูกค้าห่างหาย',
     html: `<div class="stack">${adminOnly()}${f.map(([k, t, h]) => `<label class="field"><span>${t}</span><input class="inp" inputmode="numeric" data-k="${k}" value="${esc(m.settings[k])}">${h ? `<span class="xs faint" style="margin-top:3px">${h}</span>` : ''}</label>`).join('')}
@@ -143,64 +144,106 @@ async function imports({ m }) {
   if (!S.user?.isAdmin) return { title: 'ประวัติการนำเข้า', html: adminOnly() };
   let batches = [], reviews = [];
   try { const [b, r] = await Promise.all([api('/api/tab/IMPORT_BATCHES'), api('/api/tab/IMPORT_REVIEW')]); batches = rowsToObjects(b.valueRanges[0].values).reverse(); reviews = rowsToObjects(r.valueRanges[0].values); } catch (e) { return { title: 'ประวัติการนำเข้า', html: `<div class="banner bad">โหลดไม่สำเร็จ: ${esc(e.message)}</div>` }; }
-  const open = reviews.filter(r => r.status === 'open' || !r.status);
+  const open = reviews.filter(r => !['confirmed', 'ignored'].includes(r.status));
   return {
     title: 'ประวัติการนำเข้า',
     html: `<div class="stack"><div class="sec" style="margin-top:0">รอบนำเข้า (${batches.length})</div>
       <div class="list">${batches.map(b => `<div class="li" style="cursor:default"><div class="grow"><div class="t ell">${esc(b.fileName || b.batchId)}</div><div class="s">${fmtDateTime(b.at)} · ${esc(b.format)} · ${esc(b.user)}</div><div class="xs faint">${esc(b.summary)}</div></div><span class="badge ok">${esc(b.status)}</span></div>`).join('') || emptyMsg('ยังไม่มีการนำเข้า')}</div>
       <div class="row between"><div class="sec" style="margin:0">รายการรอตรวจ (${open.length} / ${reviews.length})</div><button class="btn line sm" id="ex">${icon('dl')} CSV</button></div>
       <label class="search">${icon('search')}<input id="rq" type="search" placeholder="ค้นหารายการตรวจ (รหัสปัญหา เลขบิล)" autocomplete="off"></label>
-      <div class="list" id="rl">${reviews.slice().reverse().slice(0, 200).map(r => `<div class="li" data-rv="${esc((r.issueCode + ' ' + r.sourceKey + ' ' + r.entityType + ' ' + r.sourceValue).toLowerCase())}" style="cursor:default;align-items:flex-start"><div class="grow"><div class="t" style="font-weight:500">${esc(r.issueCode)} · ${esc(r.entityType)} ${esc(r.sourceKey)}</div><div class="s">${esc(r.sourceValue)} ${r.existingValue ? '· ' + esc(r.existingValue) : ''}</div><div class="xs faint">${esc(r.suggestedAction)}</div></div>${(r.status === 'open' || !r.status) ? `<button class="btn ghost sm" data-r="${esc(r.reviewId)}">ตรวจแล้ว</button>` : `<span class="badge gray">${esc(r.status)}</span>`}</div>`).join('') || emptyMsg('ไม่มีรายการรอตรวจ')}</div></div>`,
+      <div class="list" id="rl">${reviews.slice().reverse().slice(0, 200).map(r => `<div class="li" data-rv="${esc((r.issueCode + ' ' + r.sourceKey + ' ' + r.entityType + ' ' + r.sourceValue).toLowerCase())}" style="cursor:default;align-items:flex-start"><div class="grow"><div class="t" style="font-weight:500">${esc(r.issueCode)} · ${esc(r.entityType)} ${esc(r.sourceKey)}</div><div class="s">${esc(r.sourceValue)} ${r.existingValue ? '· ' + esc(r.existingValue) : ''}</div><div class="xs faint">${esc(r.suggestedAction)}</div></div>${!['confirmed', 'ignored'].includes(r.status) ? `<button class="btn ghost sm" data-r="${esc(r.reviewId)}">ตรวจแล้ว</button>` : `<span class="badge gray">${esc(r.status)}</span>`}</div>`).join('') || emptyMsg('ไม่มีรายการรอตรวจ')}</div></div>`,
     after(root) {
       root.querySelector('#rq').addEventListener('input', e => { const t = e.target.value.trim().toLowerCase(); root.querySelectorAll('#rl [data-rv]').forEach(li => li.classList.toggle('hide', !!t && !li.dataset.rv.includes(t))); });
       root.querySelector('#ex').onclick = () => download(`import-review-${m.today}.csv`, D.toCsv(reviews, ['reviewId', 'batchId', 'sourceFile', 'entityType', 'sourceKey', 'issueCode', 'severity', 'sourceValue', 'existingValue', 'suggestedAction', 'status', 'reviewedBy', 'reviewedAt', 'resolutionNote']));
-      root.addEventListener('click', async e => { const b = e.target.closest('[data-r]'); if (!b) return; try { await enqueue('review.update', { reviewId: b.dataset.r, status: 'resolved' }); await flush(); toast('บันทึกแล้ว'); location.reload(); } catch (er) { toast(er.message); } });
+      root.addEventListener('click', async e => { const b = e.target.closest('[data-r]'); if (!b) return; try { await enqueue('review.update', { reviewId: b.dataset.r, status: 'confirmed' }); await flush(); toast('บันทึกแล้ว'); location.reload(); } catch (er) { toast(er.message); } });
     },
   };
 }
 
-// ---------------- TTX import ----------------
+// ---------------- TTX import (real accounting-program export, bills + customers) ----------------
+const stamp = () => { const d = new Date(Date.now() + 7 * 3600000); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; };
 function importPage({ m }) {
   return {
     title: 'นำเข้า TTX',
-    html: `<div class="stack">${adminOnly()}<div class="banner" style="background:var(--blue-soft);color:var(--ink)">นำเข้าเฉพาะบิลใหม่ที่ยังไม่มีเลขบิลในฐาน ไม่เขียนทับบิลเดิม · ไฟล์ซ้ำ (ลายนิ้วมือไฟล์เดียวกัน) จะถูกปฏิเสธ · ทุกอย่างที่ผิดปกติลงแท็บ IMPORT_REVIEW</div>
+    html: `<div class="stack">${adminOnly()}<div class="banner" style="background:var(--blue-soft);color:var(--ink)">รองรับไฟล์ TTX ของระบบบัญชี 2 แบบ: <b>รายงานการขายรายบิล</b> และ <b>รายงานลูกค้า</b> (cp874) · นำเข้าเฉพาะที่ยังไม่มีในฐาน ไม่เขียนทับของเดิม · ไฟล์เดิมซ้ำถูกปฏิเสธ · ผิดปกติลงแท็บ IMPORT_REVIEW</div>
       <label class="btn line block" for="tf">${icon('import')} เลือกไฟล์ TTX</label><input type="file" id="tf" accept=".ttx,.txt,.csv,.tsv,text/*" class="hide" ${S.user?.isAdmin ? '' : 'disabled'}><div id="ti"></div></div>`,
     after(root) {
       const out = root.querySelector('#ti');
       root.querySelector('#tf').onchange = async e => {
         const f = e.target.files[0]; if (!f) return;
         out.innerHTML = '<div class="empty">กำลังอ่านไฟล์…</div>';
-        const buf = await f.arrayBuffer();
-        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(b => b.toString(16).padStart(2, '0')).join('');
-        const parsed = parseTtx(decodeBuffer(buf));
-        if (parsed.error) { out.innerHTML = `<div class="banner bad">${esc(parsed.error)}</div>`; return; }
-        let known = [];
-        try { known = rowsToObjects((await api('/api/tab/IMPORT_BATCHES')).valueRanges[0].values); } catch (er) { out.innerHTML = `<div class="banner bad">${esc(er.message)}</div>`; return; }
-        const dup = known.find(b => b.fileHash === hash);
-        const a = analyze(m, parsed, f.name);
-        out.innerHTML = `${dup ? `<div class="banner bad">ไฟล์นี้เคยนำเข้าแล้ว (${esc(dup.fileName)} · ${fmtDateTime(dup.at)}) — ไม่สามารถนำเข้าซ้ำ</div>` : ''}
-          <div class="card"><div class="b">${esc(f.name)}</div><div class="xs faint">ตัวคั่น ${parsed.delimiter} · ${parsed.bills.length} บิล · ${parsed.items.length} รายการ</div>
-          <dl class="kv" style="margin-top:8px"><dt>บิลใหม่</dt><dd>${a.newBills.length} บิล / ${a.newItems.length} รายการ</dd><dt>มีแล้ว (เหมือนเดิม)</dt><dd>${a.same.length}</dd><dt>มีแล้ว (ยอดต่าง)</dt><dd>${a.diff.length} (ไม่เขียนทับ ลงรายการตรวจ)</dd><dt>ลูกค้าไม่พบ</dt><dd>${a.unknownCust.length}</dd><dt>รหัสไม่ตรงทะเบียน</dt><dd>${a.codes.size} รหัส</dd><dt>แถวที่อ่านไม่ได้</dt><dd>${parsed.bad.length}</dd><dt>รายการตรวจ</dt><dd>${a.reviews.length}</dd></dl></div>
-          <button class="btn grad block" id="go" style="margin-top:12px" ${dup || (!a.newBills.length && !a.reviews.length) ? 'disabled' : ''}>นำเข้า ${a.newBills.length} บิลใหม่</button><div id="pr" class="xs muted" style="margin-top:8px"></div>`;
-        out.querySelector('#go').onclick = async btn => {
-          btn.target.disabled = true; const pr = out.querySelector('#pr');
-          const batch = { batchId: `IMP-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${uuid().slice(0, 6)}`, fileName: f.name, fileHash: hash, format: 'TTX', kind: 'bills', summary: `บิลใหม่ ${a.newBills.length} · รายการ ${a.newItems.length} · ตรวจ ${a.reviews.length}` };
-          const chunks = []; let cur = { bills: [], items: [] }, n = 0;
-          for (const b of a.newBills) { const its = a.itemsByBill.get(b.no); if (n + its.length + 1 > 2800) { chunks.push(cur); cur = { bills: [], items: [] }; n = 0; } cur.bills.push(b); cur.items.push(...its); n += its.length + 1; }
-          chunks.push(cur);
-          for (let i = 0; i < a.reviews.length; i += 800) chunks.push({ bills: [], items: [], reviews: a.reviews.slice(i, i + 800) });
-          try {
-            for (let i = 0; i < chunks.length; i++) {
-              pr.textContent = `กำลังนำเข้า ${i + 1}/${chunks.length}…`;
-              const r = await api('/api/ops', { method: 'POST', body: { deviceId: S.deviceId, ops: [{ type: 'import.commit', opId: `${batch.batchId}-${i}`, at: Date.now(), payload: { first: i === 0, batch, ...chunks[i] } }] } });
-              const res = r.results[0]; if (res.status === 'error') throw new Error(res.message);
-            }
-            pr.innerHTML = '<span style="color:var(--ok)">นำเข้าเรียบร้อย กำลังโหลดข้อมูลใหม่…</span>'; await refresh(); toast('นำเข้าเรียบร้อย'); location.hash = '#/settings/imports';
-          } catch (er) { pr.innerHTML = `<span style="color:var(--bad)">หยุดที่ผิดพลาด: ${esc(er.message)} (บิลที่นำเข้าไปแล้วไม่ซ้ำเมื่อลองใหม่)</span>`; btn.target.disabled = false; }
-        };
+        try { await analyzeFile(f, m, out); } catch (er) { out.innerHTML = `<div class="banner bad">${esc(er.message)}</div>`; }
       };
     },
   };
+}
+async function analyzeFile(f, m, out) {
+  const buf = await f.arrayBuffer();
+  const hash = 'sha256:' + (await sha256Hex(buf)).slice(0, 16);
+  const text = decodeBuffer(buf), kind = detectKind(text);
+  if (!kind) { out.innerHTML = `<div class="banner bad">ไม่รู้จักรูปแบบไฟล์นี้ — ต้องเป็นรายงานการขายรายบิล หรือรายงานลูกค้าจากระบบบัญชี (ไม่นำเข้าโดยเดา)</div>`; return; }
+  const known = rowsToObjects((await api('/api/tab/IMPORT_BATCHES')).valueRanges[0].values);
+  const dup = known.find(b => b.fileHash === hash);
+  const modeSales = (() => { const c2 = new Map(); for (const b of m.bills) if (b.salesperson) c2.set(b.salesperson, (c2.get(b.salesperson) || 0) + 1); return [...c2.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''; })();
+  const head = `${dup ? `<div class="banner bad">ไฟล์นี้เคยนำเข้าแล้ว (${esc(dup.fileName)} · ${fmtDateTime(dup.at)}) — ไม่สามารถนำเข้าซ้ำ</div>` : ''}`;
+  const batchBase = `TTX-${kind === 'bills' ? 'BILL' : 'CUST'}-${stamp()}-${Math.floor(Math.random() * 900 + 100)}`;
+  if (kind === 'bills') {
+    const parsed = parseBills(text);
+    const a = analyzeBills(m, parsed, { fileName: f.name, salesperson: modeSales });
+    const totals = new Map(a.newBills.map(c => [c.bill.no, c.items.reduce((s, i) => s + D.num(i.amount), 0)]));
+    const links = D.matchOrdersToBills(m, a.newBills.map(c => c.bill), totals);
+    const rawItems = parsed.bills.reduce((s, b) => s + b.items.length, 0), rawSum = parsed.bills.reduce((s, b) => s + b.items.reduce((x, i) => x + i.amount, 0), 0);
+    const newItems = a.newBills.reduce((s, c) => s + c.items.length, 0), newAmt = [...totals.values()].reduce((s, x) => s + x, 0);
+    const flagsBy = a.flags.reduce((o, x) => (o[x.issueCode] = (o[x.issueCode] || 0) + 1, o), {});
+    const footOk = a.footer && Math.abs(a.footer.grand - rawSum) < 0.01;
+    out.innerHTML = `${head}<div class="card"><div class="b">${esc(f.name)}</div><div class="xs faint">รายงานรายบิล · ${parsed.bills.length} บิล · ${rawItems} รายการ</div>
+      <dl class="kv" style="margin-top:8px"><dt>บิลใหม่</dt><dd>${a.newBills.length} บิล / ${newItems} รายการ / ${D.money(newAmt)} ฿</dd><dt>มีอยู่แล้ว (ตรง)</dt><dd>${a.same.length}</dd><dt>มีอยู่แล้ว (ยอดต่าง)</dt><dd>${a.diff.length} (ไม่เขียนทับ ลงรายการตรวจ)</dd><dt>เชื่อมออเดอร์</dt><dd>${links.length} ออเดอร์ (ลูกค้า+ยอดตรง ภายใน 7 วัน)</dd><dt>ยอดรวมไฟล์</dt><dd>${footOk ? `<span class="badge ok">ตรง footer ${D.money(a.footer.grand)}</span>` : `<span class="badge warn">คำนวณ ${D.money(rawSum)}${a.footer ? ' / footer ' + D.money(a.footer.grand) : ''}</span>`}</dd><dt>แถวอ่านไม่ได้</dt><dd>${parsed.bad.length}</dd><dt>รายการตรวจ</dt><dd>${a.flags.length}${Object.keys(flagsBy).length ? ' (' + Object.entries(flagsBy).map(([k, v]) => `${esc(k)} ${v}`).join(', ') + ')' : ''}</dd></dl></div>
+      <div class="xs faint" style="margin-top:6px">บิลที่มีบรรทัดภาษี (0015) จะเก็บเฉพาะสินค้า + vatMode VAT_OUT; บิลที่มี 0014 “ขอใบกำกับภาษี” = VAT_IN; ยอดขายยึดผลรวมรายการ ไม่บวกภาษีซ้ำ</div>
+      <button class="btn grad block" id="go" style="margin-top:12px" ${dup || (!a.newBills.length && !a.flags.length) ? 'disabled' : ''}>นำเข้า ${a.newBills.length} บิลใหม่${a.flags.length ? ` + ${a.flags.length} รายการตรวจ` : ''}</button><div id="pr" class="xs muted" style="margin-top:8px"></div>`;
+    out.querySelector('#go').onclick = async ev => {
+      ev.target.disabled = true; const pr = out.querySelector('#pr');
+      const batch = { batchId: batchBase, fileName: f.name, fileHash: hash, kind: 'bills', status: a.flags.length ? 'ok_with_flags' : 'ok', source: 'TTX ในแอป', format: 'TTX cp874', summary: `ไฟล์ ${parsed.bills.length} บิล; เพิ่มใหม่ ${a.newBills.length} บิล, ${newItems} รายการ, ยอด ${newAmt.toFixed(2)}; มีอยู่แล้ว ${a.same.length + a.diff.length} บิล (เทียบเฉพาะเลขบิล); flag ${a.flags.length}` };
+      const chunks = []; let cur = { bills: [], items: [] }, n = 0;
+      for (const c of a.newBills) { if (n + c.items.length + 1 > 2800) { chunks.push(cur); cur = { bills: [], items: [] }; n = 0; } cur.bills.push(c.bill); cur.items.push(...c.items); n += c.items.length + 1; }
+      chunks.push(cur);
+      for (let i = 0; i < a.flags.length; i += 800) chunks.push({ bills: [], items: [], reviews: a.flags.slice(i, i + 800) });
+      if (links.length) chunks.push({ bills: [], items: [], orderLinks: links });
+      await runChunks(out, pr, batch, chunks, ev.target);
+    };
+  } else {
+    const parsed = parseCustomers(text);
+    const a = analyzeCustomers(m, parsed);
+    // field-created shops (temp code) that look like a new accounting customer -> offer to link instead of duplicating
+    const tempShops = m.customers.filter(c => D.isTempId(c.id));
+    const matches = new Map();
+    for (const x of a.fresh) {
+      const hit = tempShops.find(t => D.normText(t.name) === D.normText(x.customer.name) || (x.phones.length && D.custPhones(m, t.id).some(p => x.phones.some(q => D.digits(p) === D.digits(q) && D.digits(p).length >= 8))) || D.dice(t.name, x.customer.name) >= 0.9);
+      if (hit && !matches.has(hit.id)) matches.set(x.customer.id, hit);
+    }
+    out.innerHTML = `${head}<div class="card"><div class="b">${esc(f.name)}</div><div class="xs faint">รายงานลูกค้า · ${parsed.customers.length} แถว</div>
+      <dl class="kv" style="margin-top:8px"><dt>ลูกค้าใหม่</dt><dd>${a.fresh.length}</dd><dt>มีอยู่แล้ว</dt><dd>${a.existing.length} (ไม่แก้ไข)</dd><dt>จับคู่ร้านชั่วคราว</dt><dd>${matches.size}</dd><dt>แถวอ่านไม่ได้</dt><dd>${parsed.bad.length}</dd></dl>
+      ${a.fresh.length ? `<div class="list" style="margin-top:8px">${a.fresh.slice(0, 30).map(x => `<div class="li" style="cursor:default"><div class="grow"><div class="t" style="font-weight:500">${esc(x.customer.name)}</div><div class="s">${esc(x.customer.id)}${matches.has(x.customer.id) ? ` · <span class="badge warn">ตรงกับร้านชั่วคราว ${esc(matches.get(x.customer.id).id)} → ผูกรหัส</span>` : ''}</div></div></div>`).join('')}</div>` : ''}</div>
+      <button class="btn grad block" id="go" style="margin-top:12px" ${dup || !a.fresh.length ? 'disabled' : ''}>นำเข้า ${a.fresh.length} ลูกค้าใหม่${matches.size ? ` (ผูกรหัสให้ร้านชั่วคราว ${matches.size})` : ''}</button><div id="pr" class="xs muted" style="margin-top:8px"></div>`;
+    out.querySelector('#go').onclick = async ev => {
+      ev.target.disabled = true; const pr = out.querySelector('#pr');
+      const plain = a.fresh.filter(x => !matches.has(x.customer.id));
+      const batch = { batchId: batchBase, fileName: f.name, fileHash: hash, kind: 'customers', status: 'ok', source: 'TTX ในแอป', format: 'TTX cp874', summary: `ไฟล์ ${parsed.customers.length} ราย; เพิ่มใหม่ ${plain.length}; ผูกรหัสร้านชั่วคราว ${matches.size}; มีแล้ว ${a.existing.length} (ไม่แก้ไข)` };
+      const chunks = []; for (let i = 0; i < plain.length; i += 900) chunks.push({ customers: plain.slice(i, i + 900) });
+      if (!chunks.length) chunks.push({});
+      await runChunks(out, pr, batch, chunks, ev.target, [...matches].map(([newId, t]) => ({ type: 'customer.assignCode', payload: { customerId: t.id, newId } })));
+    };
+  }
+}
+async function runChunks(out, pr, batch, chunks, btn, extraOps = []) {
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      pr.textContent = `กำลังนำเข้า ${i + 1}/${chunks.length}…`;
+      const r = await api('/api/ops', { method: 'POST', body: { deviceId: S.deviceId, ops: [{ type: 'import.commit', opId: `${batch.batchId}-${i}`, at: Date.now(), payload: { first: i === 0, batch, ...chunks[i] } }] } });
+      const res = r.results[0]; if (res.status === 'error') throw new Error(res.message);
+    }
+    for (const [i, op] of extraOps.entries()) { pr.textContent = `ผูกรหัส ${i + 1}/${extraOps.length}…`; const r = await api('/api/ops', { method: 'POST', body: { deviceId: S.deviceId, ops: [{ ...op, opId: `${batch.batchId}-L${i}`, at: Date.now() }] } }); if (r.results[0].status === 'error') throw new Error(r.results[0].message); }
+    pr.innerHTML = '<span style="color:var(--ok)">นำเข้าเรียบร้อย กำลังโหลดข้อมูลใหม่…</span>'; await refresh(); toast('นำเข้าเรียบร้อย'); location.hash = '#/settings/imports';
+  } catch (er) { pr.innerHTML = `<span style="color:var(--bad)">หยุดที่ผิดพลาด: ${esc(er.message)} (รายการที่นำเข้าไปแล้วไม่ซ้ำเมื่อลองใหม่)</span>`; btn.disabled = false; }
 }
 
 // ---------------- sync / account ----------------

@@ -61,7 +61,7 @@ async function render() {
     const mod = pageCache[route.mod] || (pageCache[route.mod] = await import(`./pages/${route.mod}.js?v=${encodeURIComponent(VERSION)}`));
     const out = await mod.default({ params: m.slice(1).map(decodeURIComponent), query, m: S.model, path });
     const html = typeof out === 'string' ? out : out.html;
-    view.innerHTML = html;
+    view.innerHTML = (S.health?.mode === 'memory' ? `<div class="banner" style="margin-bottom:12px"><b>โหมดทดลอง</b> — ข้อมูลจำลอง ไม่ใช่ฐาน Google Sheets จริง (รีเซ็ตเมื่อเซิร์ฟเวอร์รีสตาร์ต)</div>` : '') + html;
     if (out.title) setTitle(out.title); else if (route.title) document.title = `${route.title} · HAVAN CRM`;
     if (out.after) current.cleanup = out.after(view) || null;
   } catch (e) {
