@@ -178,13 +178,13 @@ export default function order({ m, params, query }) {
   }
   function docSheet(o, lines, onClose) {
     const modeSales = (() => { const c2 = new Map(); for (const b of m.bills) if (b.salesperson) c2.set(b.salesperson, (c2.get(b.salesperson) || 0) + 1); return [...c2.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''; })();
-    let showCode = false;
+    let showCode = true;
     const html = () => slipHtml(o, lines, c, { showCode, salesperson: modeSales, phones: D.custPhones(m, cid), tempCode: D.isTempId(cid), units: UNITS });
     const txt = D.orderDocText(m, o, lines);
     const s = sheet(`<div class="row between"><h3 style="margin:0">ใบส่งสินค้าชั่วคราว</h3><button class="btn ghost sm" data-close>ปิด</button></div>
       <div class="slipbox" id="sb" style="margin:10px 0">${html()}</div>
       <label class="row sm" style="margin-bottom:8px"><input type="checkbox" id="zm"> <span>ขยายดู (เลื่อนในกรอบได้)</span></label>
-      <label class="row sm" style="margin-bottom:10px"><input type="checkbox" id="sc2"> <span>พิมพ์รหัสสินค้าในช่องรหัส (ค่าเริ่มต้น: เว้นว่าง)</span></label>
+      <label class="row sm" style="margin-bottom:10px"><input type="checkbox" id="sc2" checked> <span>พิมพ์รหัสสินค้าในช่องรหัส</span></label>
       <div class="row"><button class="btn line grow" id="dc">คัดลอก</button><button class="btn line grow" id="dp">พิมพ์/PDF</button><button class="btn grad grow" id="ds">แชร์</button></div>`, { onClose });
     const box = s.el.querySelector('#sb');
     s.el.querySelector('#zm').onchange = e => box.classList.toggle('zoom', e.target.checked);

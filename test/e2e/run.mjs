@@ -254,7 +254,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     ok(await page.locator('.sheet .slip img').first().evaluate(i => i.complete && i.naturalWidth > 500), 'slip template not loaded');
     const r = await until(async () => { const x = await raw(); return x.orders.find(o => o.no === ORDER_NO)?.status === 'รอส่ง' && x; }); ok(r.order_items.filter(i => i.orderNo === ORDER_NO).length === n, 'item count changed');
     ok(r.orders.filter(o => o.no === ORDER_NO).length === 1, 'duplicate order row');
-    for (const i of r.order_items.filter(i => i.orderNo === ORDER_NO)) if (i.code) ok(!new RegExp(`(^|\\n)${i.code}(\\n|$)`).test(doc), `doc shows product code ${i.code}`);
+    for (const i of r.order_items.filter(i => i.orderNo === ORDER_NO)) if (i.code) ok(doc.includes(i.code), `slip lacks product code ${i.code}`);
     await page.locator('.sheet [data-close]').first().click();
   });
   await step('re-sending the same op id is answered "duplicate" and changes nothing', async () => {

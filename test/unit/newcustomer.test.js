@@ -108,15 +108,15 @@ test('new customers: "first purchase" and "newly registered" are different group
   assert.deepEqual(D.customersBy(m, 'temp').map(c => c.id), ['N-691120-ZZZZ']);
 });
 
-test('slip: customer code shown, product-code column blank by default, baht text, pagination at 15 rows', () => {
+test('slip: customer code and product codes shown, baht text, pagination at 15 rows', () => {
   const o = { no: '01261169', date: '2026-11-26', customerId: '57900', paymentTerm: 'เงินสด' };
   const lines = Array.from({ length: 17 }, (_, i) => ({ code: `C${i}`, name: `สินค้า ${i + 1}`, qty: 2, price: 100, unit: 'ชิ้น' }));
   const h = slipHtml(o, lines, { name: 'ร้านทดสอบ', address: 'ถนน ทดสอบ ซอย 1 กรุงเทพมหานคร', billClerk: 'ฝน' }, { salesperson: 'อาร์ต', phones: ['081-111-2222'] });
   assert.equal((h.match(/class="slip"/g) || []).length, 2);
   assert.ok(h.includes('57900') && h.includes('26/11/2569') && h.includes('เงินสด/ฝน') && h.includes('สินค้า 17'));
-  assert.ok(!/>C\d+</.test(h), 'product codes must not print by default');
+  assert.ok(/>C0</.test(h) && />C16</.test(h), 'product codes print by default (column kept)');
+  assert.ok(!/>C\d+</.test(slipHtml(o, lines.slice(0, 2), null, { showCode: false })), 'showCode:false leaves the column blank');
   assert.ok(h.includes('3,400.00') && h.includes('สามพันสี่ร้อยบาทถ้วน'));
-  assert.ok(/>C0</.test(slipHtml(o, lines.slice(0, 2), null, { showCode: true })));
-  assert.ok(slipHtml({ ...o, customerId: 'N-691126-AAAA' }, lines.slice(0, 1), null, { tempCode: true }).includes('รอรหัสบัญชี'));
+    assert.ok(slipHtml({ ...o, customerId: 'N-691126-AAAA' }, lines.slice(0, 1), null, { tempCode: true }).includes('รอรหัสบัญชี'));
   assert.equal(D.bahtText(10600), 'หนึ่งหมื่นหกร้อยบาทถ้วน');
 });

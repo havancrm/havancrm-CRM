@@ -1,7 +1,7 @@
 // ใบส่งสินค้าชั่วคราว - drawn on the company's own form (public/img/slip-template.png).
 // Field positions are taken from the sample overlay supplied with the form (percent of the form).
-// By default the product-code column is LEFT BLANK (requirement: order documents do not show product codes);
-// pass showCode:true to print it like the sample.
+// The product-code column is PRINTED by default, like the sample form (owner decision 2026-11-27);
+// pass showCode:false to leave it blank.
 import { num, money, bahtText, dayNum, dayStr } from './shared/domain.js';
 import { esc } from './ui.js';
 
@@ -22,7 +22,7 @@ function wrapAddress(a, n = 44) {
 
 // order: {no,date,customerId,customerNameOverride,paymentTerm,note}; lines: [{code,name,qty,price,unit}]
 // cust: customers row (or undefined); extra: {salesperson, clerk, phones[]}
-export function slipHtml(order, lines, cust, { showCode = false, salesperson = '', clerk = '', phones = [], tempCode = false, units = {} } = {}) {
+export function slipHtml(order, lines, cust, { showCode = true, salesperson = '', clerk = '', phones = [], tempCode = false, units = {} } = {}) {
   const rows = lines.filter(l => num(l.qty) > 0 || num(l.price) > 0);
   const pages = []; for (let i = 0; i < Math.max(1, rows.length); i += ROWS_PER_PAGE) pages.push(rows.slice(i, i + ROWS_PER_PAGE));
   const total = rows.reduce((s, l) => s + Math.round(num(l.qty) * num(l.price) * 100) / 100, 0);
