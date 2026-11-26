@@ -195,6 +195,14 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     const before = page.url(); await page.locator('[data-m="1"]').click(); await sleep(250); ok(page.url() === before || page.url().includes('visits'), 'left page');
     await page.locator('[data-m="-1"]').click(); await sleep(250); await page.locator(`[data-d="${apptDay}"]`).click(); await sleep(200); ok((await view().innerText()).includes('ร้าน'), 'list');
   });
+  await step('calendar can be shown by MONTH or by DAY (choice remembered); day view has prev/next/today and lists the stores', async () => {
+    await go(`#/visits?tab=cal&ym=${apptDay.slice(0, 7)}&d=${apptDay}&v=month`); ok(await page.locator('.cal').count() === 1, 'month grid');
+    await page.locator('[data-vm="day"]').click(); await sleep(300); ok(await page.locator('.cal').count() === 0, 'grid still shown'); ok((await view().innerText()).includes('ร้าน'), 'day header');
+    const t0 = await page.locator('[data-dd="1"]').count(); ok(t0 === 1, 'next day'); await page.locator('[data-dd="-1"]').click(); await page.locator('[data-dd="1"]').click(); await sleep(200);
+    await page.locator('[data-today]').click(); await sleep(200); ok((await view().innerText()).includes('วันนี้'), 'today');
+    await page.fill('#dp', apptDay); await page.dispatchEvent('#dp', 'change'); await sleep(300); ok((await view().innerText()).includes(M0.custById.get(CID).name), 'appointment store in day view'); await shot('calendar-day');
+    await go('#/visits?tab=cal'); ok(await page.locator('.cal').count() === 0, 'mode not remembered'); await page.locator('[data-vm="month"]').click(); await sleep(200); ok(await page.locator('.cal').count() === 1, 'back to month');
+  });
   await step('completing the follow-up task closes it and adds an activity', async () => {
     await go(`#/c/${CID}?tab=visits`); await page.locator('[data-done]').first().click(); await page.waitForSelector('.sheet #cs'); await page.click('#cs');
     const r = await until(async () => { const x = await raw(); return x.tasks.find(t => t.note?.includes(APPT) && t.status === 'done') && x; }); ok(r, 'task not done');
