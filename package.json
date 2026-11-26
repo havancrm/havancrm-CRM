@@ -1,0 +1,19 @@
+{
+  "name": "havan-crm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "HAVAN CRM - field sales CRM on Cloudflare Workers (free) + Google Sheets",
+  "scripts": {
+    "stamp": "node scripts/stamp.mjs",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "node test/e2e/run.mjs",
+    "check": "npm run stamp && npm test && npm run test:e2e",
+    "dev": "wrangler dev --var DATA_MODE:memory --var AUTH_MODE:dev",
+    "preview": "wrangler versions upload",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

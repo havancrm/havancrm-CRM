@@ -1,0 +1,27 @@
+# Manual deploy. Runs the full test suite first. Needs repo secrets CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID.
+# Worker secrets (GOOGLE_SA_EMAIL / GOOGLE_SA_KEY) are set once with `wrangler secret put` - see docs/DEPLOY.md.
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'preview = upload a version only (preview URL); production = deploy'
+        type: choice
+        options: [preview, production]
+        default: preview
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run stamp && npm test
+      - run: npm i --no-save playwright && npx playwright install --with-deps chromium
+      - run: node test/e2e/run.mjs
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: ${{ inputs.target == 'production' && 'deploy' || 'versions upload' }}

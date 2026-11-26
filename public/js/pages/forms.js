@@ -1,0 +1,152 @@
+// Shared sheets for field work. ONE visit form covers check-in, visit log, note and appointment.
+import * as D from '../shared/domain.js';
+import { esc, icon, sheet, toast, getGps, distanceKm, compressImage, confirmBox } from '../ui.js';
+import { S, enqueue } from '../data.js';
+
+const OUTCOMES = ['', 'ได้ออเดอร์', 'ไม่มีออเดอร์', 'ร้านปิด/ไม่พบผู้ตัดสินใจ', 'ขอคิดดู/ติดตามต่อ', 'อื่นๆ'];
+const errMsg = e => e?.message || String(e);
+
+export function visitSheet(customerId, { kind = 'visit' } = {}) {
+  const m = S.model, c = m.custById.get(customerId);
+  let cur = kind, photo = null, gps = null, skipGps = false;
+  const s = sheet(`<div class="row between"><h3 style="margin:0">บันทึก · ${esc(c?.name || customerId)}</h3><button class="btn ghost sm" data-close>ปิด</button></div>
+    <div class="stack" style="margin-top:12px">
+    <div class="seg" id="vk"><button data-k="visit">เข้าพบ</button><button data-k="note">โน้ต</button><button data-k="appointment">นัดหมาย</button></div>
+    <label class="field"><span id="nl">รายละเอียด</span><textarea class="inp" id="vn" placeholder="เช่น คุยกับเจ้าของร้าน สินค้าที่สนใจ สิ่งที่ต้องติดตาม"></textarea></label>
+    <label class="field" id="ow"><span>ผลการเข้าพบ</span><select class="inp" id="vo">${OUTCOMES.map(o => `<option>${esc(o)}</option>`).join('')}</select></label>
+    <label class="field hide" id="dw"><span>วันที่นัด</span><input class="inp" type="date" id="vd" min="${m.today}"></label>
+    <label class="row" id="gw"><input type="checkbox" id="vg" checked> <span>แนบพิกัด GPS ปัจจุบัน</span></label>
+    <div class="xs muted" id="gs"></div>
+    <div id="pw"><label class="btn line block" for="vp">${icon('camera')} ถ่าย/เลือกรูป (ไม่บังคับ)</label><input type="file" id="vp" accept="image/*" capture="environment" class="hide"><img id="pv" class="photo hide" style="margin-top:8px" alt="ตัวอย่างรูป"></div>
+    <button class="btn grad block" id="vs">บันทึก</button></div>`);
+  const q = x => s.el.querySelector(x);
+  const apply = () => {
+    s.el.querySelectorAll('#vk button').forEach(b => b.classList.toggle('on', b.dataset.k === cur));
+    q('#ow').classList.toggle('hide', cur !== 'visit'); q('#dw').classList.toggle('hide', cur !== 'appointment');
+    q('#gw').classList.toggle('hide', cur === 'appointment'); q('#pw').classList.toggle('hide', cur === 'appointment');
+    q('#vg').checked = cur === 'visit';
+    q('#nl').textContent = cur === 'appointment' ? 'เรื่องที่นัด / สิ่งที่ต้องทำ' : cur === 'note' ? 'โน้ต' : 'รายละเอียดการเข้าพบ';
+    q('#vs').textContent = cur === 'appointment' ? 'บันทึกนัดหมาย' : 'บันทึก';
+  };
+  const probe = async () => {
+    if (cur === 'appointment' || !q('#vg').checked) { q('#gs').textContent = ''; return; }
+    q('#gs').textContent = 'กำลังอ่านพิกัด…';
+    try {
+      gps = await getGps(); skipGps = false;
+      let t = `พิกัดพร้อม (±${gps.accuracy} ม.)`;
+      if (c && D.hasGps(c)) { const d = distanceKm(gps, { lat: +c.gpsLat, lng: +c.gpsLng }) * 1000; t += ` · ห่างจากพิกัดร้าน ${d < 1000 ? Math.round(d) + ' ม.' : (d / 1000).toFixed(1) + ' กม.'}`; }
+      q('#gs').textContent = t;
+    } catch (e) { gps = null; skipGps = true; q('#gs').innerHTML = `<span style="color:var(--warn)">${esc(errMsg(e))} — กดบันทึกอีกครั้งเพื่อบันทึกโดยไม่มีพิกัด</span>`; }
+  };
+  s.el.querySelectorAll('#vk button').forEach(b => b.onclick = () => { cur = b.dataset.k; apply(); probe(); });
+  apply(); probe();
+  q('#vg').onchange = () => { skipGps = false; probe(); };
+  q('#vp').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { photo = await compressImage(f); const pv = q('#pv'); pv.src = photo.preview; pv.classList.remove('hide'); } catch { toast('อ่านรูปไม่สำเร็จ'); } };
+  q('#vs').onclick = async () => {
+    const note = q('#vn').value.trim();
+    if (cur === 'note' && !note) return toast('กรุณาพิมพ์โน้ต');
+    if (cur === 'appointment' && !q('#vd').value) return toast('กรุณาเลือกวันที่นัด');
+    if (cur !== 'appointment' && q('#vg').checked && !gps && !skipGps) { await probe(); if (!gps) return; }
+    const btn = q('#vs'); btn.disabled = true;
+    try {
+      const p = { customerId, kind: cur, note, outcome: q('#vo')?.value || '' };
+      if (cur === 'appointment') p.plannedAt = q('#vd').value;
+      else if (q('#vg').checked && gps) Object.assign(p, { lat: gps.lat, lng: gps.lng, accuracy: gps.accuracy });
+      const op = await enqueue('visit.log', p);
+      if (photo && cur !== 'appointment') await enqueue('photo.add', { customerId, visitId: `V-${op.opId}`, photoType: 'visit', imageBase64: photo.base64, mime: photo.mime, ...(gps && q('#vg').checked ? { lat: gps.lat, lng: gps.lng } : {}) });
+      s.close(); toast(cur === 'appointment' ? 'บันทึกนัดหมายแล้ว' : 'บันทึกแล้ว');
+    } catch (e) { toast(errMsg(e)); btn.disabled = false; }
+  };
+  return s;
+}
+
+export function completeVisitSheet(visit) {
+  const s = sheet(`<h3>ทำนัดหมายเสร็จ</h3><div class="stack">
+    <div class="muted sm">${esc(visit.note || 'นัดหมาย')} · นัด ${esc(String(visit.plannedAt).slice(0, 10))}</div>
+    <label class="field"><span>ผลการเข้าพบ / โน้ต</span><textarea class="inp" id="cn"></textarea></label>
+    <label class="row"><input type="checkbox" id="cg" checked> <span>แนบพิกัด GPS</span></label>
+    <button class="btn grad block" id="cs">บันทึกว่าเสร็จแล้ว</button></div>`);
+  s.el.querySelector('#cs').onclick = async e => {
+    e.target.disabled = true; let gps = null;
+    if (s.el.querySelector('#cg').checked) { try { gps = await getGps(); } catch (er) { toast(errMsg(er) + ' — บันทึกโดยไม่มีพิกัด'); } }
+    try { await enqueue('visit.complete', { visitId: visit.visitId, customerId: visit.customerId, note: s.el.querySelector('#cn').value.trim(), ...(gps ? { lat: gps.lat, lng: gps.lng } : {}) }); s.close(); toast('บันทึกแล้ว'); }
+    catch (er) { toast(errMsg(er)); e.target.disabled = false; }
+  };
+}
+
+export function geoPhotoSheet(customerId) {
+  const m = S.model, c = m.custById.get(customerId);
+  let photo = null, type = 'store';
+  const has = c && D.hasGps(c);
+  const s = sheet(`<div class="row between"><h3 style="margin:0">รูป + พิกัดร้าน</h3><button class="btn ghost sm" data-close>ปิด</button></div><div class="stack" style="margin-top:12px">
+    <div class="card"><div class="b">พิกัดร้าน</div><div class="sm muted" style="margin:4px 0 8px">${has ? `ปัจจุบัน ${(+c.gpsLat).toFixed(5)}, ${(+c.gpsLng).toFixed(5)}` : 'ยังไม่มีพิกัด'}</div><div class="xs muted" id="gg"></div>
+      <button class="btn block" id="gb" style="margin-top:6px">${icon('pin')} ${has ? 'อัปเดตเป็นตำแหน่งปัจจุบัน' : 'บันทึกตำแหน่งปัจจุบันเป็นพิกัดร้าน'}</button></div>
+    <div class="card"><div class="b">รูปภาพ <span class="faint sm">(ไม่บังคับ)</span></div>
+      <div class="seg" id="pt" style="margin:8px 0"><button data-t="store" class="on">รูปหน้าร้าน</button><button data-t="visit">รูปเข้าพบ</button></div>
+      <label class="btn line block" for="gp">${icon('camera')} ถ่าย/เลือกรูป</label><input type="file" id="gp" accept="image/*" capture="environment" class="hide"><img id="gv" class="photo hide" style="margin-top:8px" alt="">
+      <input class="inp" id="gc" placeholder="คำบรรยาย (ถ้ามี)" style="margin-top:8px">
+      <button class="btn block hide" id="gs2" style="margin-top:8px">บันทึกรูป</button></div></div>`);
+  const q = x => s.el.querySelector(x);
+  q('#gb').onclick = async e => {
+    e.target.disabled = true; q('#gg').textContent = 'กำลังอ่านพิกัด…';
+    try {
+      const g = await getGps();
+      if (has) { const d = distanceKm(g, { lat: +c.gpsLat, lng: +c.gpsLng }) * 1000; if (d > 300 && !(await confirmBox(`ตำแหน่งใหม่ห่างจากพิกัดเดิม ${Math.round(d)} เมตร ต้องการเปลี่ยนพิกัดร้านหรือไม่?`, 'เปลี่ยนพิกัด'))) { e.target.disabled = false; q('#gg').textContent = ''; return; } }
+      await enqueue('customer.geo', { customerId, lat: g.lat, lng: g.lng, accuracy: g.accuracy }); s.close(); toast(`บันทึกพิกัดแล้ว (±${g.accuracy} ม.)`);
+    } catch (er) { q('#gg').innerHTML = `<span style="color:var(--bad)">${esc(errMsg(er))}</span>`; e.target.disabled = false; }
+  };
+  s.el.querySelectorAll('#pt button').forEach(b => b.onclick = () => { type = b.dataset.t; s.el.querySelectorAll('#pt button').forEach(x => x.classList.toggle('on', x === b)); });
+  q('#gp').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { photo = await compressImage(f); q('#gv').src = photo.preview; q('#gv').classList.remove('hide'); q('#gs2').classList.remove('hide'); } catch { toast('อ่านรูปไม่สำเร็จ'); } };
+  q('#gs2').onclick = async e => {
+    e.target.disabled = true; let g = null; try { g = await getGps(6000); } catch {}
+    try { await enqueue('photo.add', { customerId, photoType: type, caption: q('#gc').value.trim(), imageBase64: photo.base64, mime: photo.mime, ...(g ? { lat: g.lat, lng: g.lng } : {}) }); s.close(); toast('บันทึกรูปแล้ว'); }
+    catch (er) { toast(errMsg(er)); e.target.disabled = false; }
+  };
+}
+
+// ---- customer edit ----
+const FIELDS = [
+  ['name', 'ชื่อร้าน'], ['type', 'ประเภท'], ['address', 'ที่อยู่ / เส้นทาง', 'ta'], ['contactName', 'ผู้ติดต่อ'], ['paymentTerm', 'เงื่อนไขชำระ'], ['billClerk', 'เสมียนบิล'],
+  ['lineId', 'LINE ID'], ['storeHours', 'เวลาเปิด-ปิด'], ['keepNote', 'บันทึกก่อนเข้าร้าน', 'ta'], ['customerNote', 'หมายเหตุลูกค้า', 'ta'], ['specialConditions', 'เงื่อนไขพิเศษ', 'ta'],
+  ['birthday', 'วันเกิด', 'date'], ['taxInvoiceRequired', 'ต้องการใบกำกับภาษี'], ['taxName', 'ชื่อในใบกำกับภาษี'], ['taxAddress', 'ที่อยู่ใบกำกับภาษี', 'ta'], ['taxBranch', 'สาขา'], ['taxId', 'เลขประจำตัวผู้เสียภาษี'],
+  ['receiptRequired', 'ต้องการใบเสร็จ'], ['documentNote', 'หมายเหตุเอกสาร', 'ta'],
+];
+// Detect how this sheet encodes active/closed so the same convention is written back.
+export function activeConvention(m) {
+  const vals = new Set(m.customers.map(c => String(c.activeFlag ?? '').trim().toUpperCase()));
+  if (vals.has('TRUE') || vals.has('FALSE')) return ['TRUE', 'FALSE'];
+  if (vals.has('1') || vals.has('0')) return ['1', '0'];
+  if (vals.has('Y') || vals.has('N')) return ['Y', 'N'];
+  return ['TRUE', 'FALSE'];
+}
+export function editCustomerSheet(customerId) {
+  const m = S.model, c = m.custById.get(customerId); if (!c) return;
+  const [yes, no] = activeConvention(m);
+  const closed = D.isClosedFlag(c.activeFlag);
+  const phones = D.custPhones(m, customerId), labels = D.custLabels(m, customerId);
+  const all = [...new Set([...m.labels.values()].flat().map(l => l.label).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+  const inp = ([k, t, kind]) => kind === 'ta' ? `<label class="field"><span>${t}</span><textarea class="inp" data-k="${k}">${esc(c[k])}</textarea></label>` : `<label class="field"><span>${t}</span><input class="inp" ${kind === 'date' ? 'type="date"' : ''} data-k="${k}" value="${esc(c[k])}"></label>`;
+  const s = sheet(`<div class="row between"><h3 style="margin:0">แก้ไขข้อมูลลูกค้า</h3><button class="btn ghost sm" data-close>ปิด</button></div><div class="stack" style="margin-top:12px">
+    <div class="muted sm">รหัสลูกค้า ${esc(c.id)} (แก้ไม่ได้)</div>
+    <label class="field"><span>สถานะ</span><select class="inp" id="ea"><option value="${yes}" ${closed ? '' : 'selected'}>ยังดำเนินกิจการ</option><option value="${no}" ${closed ? 'selected' : ''}>เลิกกิจการ</option></select></label>
+    ${FIELDS.map(inp).join('')}
+    <label class="field"><span>เบอร์โทร (บรรทัดละเบอร์)</span><textarea class="inp" id="ep">${esc(phones.join('\n'))}</textarea></label>
+    <label class="field"><span>ป้ายกำกับ (คั่นด้วยจุลภาค)</span><input class="inp" id="el" list="all-labels" value="${esc(labels.join(', '))}"></label><datalist id="all-labels">${all.map(l => `<option value="${esc(l)}">`).join('')}</datalist>
+    <button class="btn grad block" id="es">บันทึกการแก้ไข</button></div>`);
+  s.el.querySelector('#es').onclick = async e => {
+    e.target.disabled = true;
+    try {
+      const patch = {};
+      s.el.querySelectorAll('[data-k]').forEach(el => { if (el.value !== String(c[el.dataset.k] ?? '')) patch[el.dataset.k] = el.value.trim(); });
+      const a = s.el.querySelector('#ea').value; if (D.isClosedFlag(a) !== closed) patch.activeFlag = a;
+      if (patch.name === '') { toast('ชื่อร้านต้องไม่ว่าง'); e.target.disabled = false; return; }
+      let n = 0;
+      if (Object.keys(patch).length) { await enqueue('customer.update', { customerId, patch }); n++; }
+      const ph = s.el.querySelector('#ep').value.split('\n').map(x => x.trim()).filter(Boolean);
+      if (ph.join('|') !== phones.join('|')) { await enqueue('customer.phones', { customerId, phones: ph }); n++; }
+      const lb = s.el.querySelector('#el').value.split(',').map(x => x.trim()).filter(Boolean);
+      if (lb.join('|') !== labels.join('|')) { await enqueue('customer.labels', { customerId, labels: lb }); n++; }
+      s.close(); toast(n ? 'บันทึกแล้ว' : 'ไม่มีการเปลี่ยนแปลง');
+    } catch (er) { toast(errMsg(er)); e.target.disabled = false; }
+  };
+}

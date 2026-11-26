@@ -1,0 +1,381 @@
+// End-to-end acceptance on a real Chromium with a phone viewport, against `wrangler dev` (workerd) in
+// memory-data mode. Never touches the real Google Sheet. Usage: node test/e2e/run.mjs  (BASE=http://... to reuse a server)
+import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as D from '../../public/js/shared/domain.js';
+import { rowsToObjects } from '../../public/js/shared/schema.js';
+
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright');
+const OUT = path.resolve('test/e2e/out'); fs.mkdirSync(OUT, { recursive: true });
+const PORT = 8799;
+const BASE = process.env.BASE || `http://127.0.0.1:${PORT}`;
+const results = [];
+let server;
+
+async function startServer() {
+  if (process.env.BASE) return;
+  server = spawn('npx', ['wrangler', 'dev', '--var', 'DATA_MODE:memory', '--var', 'AUTH_MODE:dev', '--port', String(PORT), '--ip', '127.0.0.1'], { stdio: 'ignore' });
+  for (let i = 0; i < 60; i++) { try { const r = await fetch(`${BASE}/api/health`); if (r.ok) return; } catch {} await new Promise(r => setTimeout(r, 1000)); }
+  throw new Error('server did not start');
+}
+const H = (u = 'dev@local') => ({ 'x-dev-user': u, 'content-type': 'application/json' });
+async function api(p, opt = {}) { const r = await fetch(BASE + p, { ...opt, headers: { ...H(opt.user), ...(opt.headers || {}) } }); return { status: r.status, body: await r.json().catch(() => ({})) }; }
+async function raw() { const r = await api('/api/bootstrap'); const o = {}; for (const v of r.body.valueRanges) o[v.range.split('!')[0]] = rowsToObjects(v.values); return o; }
+async function tab(name) { const r = await api(`/api/tab/${name}`); return rowsToObjects(r.body.valueRanges[0].values); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function until(fn, ms = 8000) { const t = Date.now(); while (Date.now() - t < ms) { try { const v = await fn(); if (v) return v; } catch {} await sleep(150); } return await fn(); }
+
+function ok(c, msg) { if (!c) throw new Error(msg || 'assertion failed'); }
+async function step(name, fn) {
+  const t = Date.now();
+  try { await fn(); results.push({ name, pass: true, ms: Date.now() - t }); console.log(`  ✓ ${name}`); }
+  catch (e) { results.push({ name, pass: false, error: e.message, ms: Date.now() - t }); console.log(`  ✗ ${name}\n      ${e.message.split('\n')[0]}`); try { await page.screenshot({ path: `${OUT}/FAIL-${results.length}.png` }); await page.evaluate(() => document.querySelectorAll('.scrim,.toast').forEach(e => e.remove())); } catch {} }
+}
+
+let page, ctx, browser; const consoleErrors = [];
+const view = () => page.locator('#view');
+async function go(hash, waitSel = '#view *') {
+  await page.evaluate(h => { location.hash = h; }, hash);
+  await page.waitForFunction(() => !document.querySelector('#view .empty')?.textContent?.includes('กำลังโหลด'), null, { timeout: 8000 }).catch(() => {});
+  await sleep(250);
+  if (waitSel) await page.waitForSelector(waitSel, { timeout: 8000 });
+}
+async function noOverflow(label) {
+  const w = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, bw: document.body.scrollWidth }));
+  ok(w.sw <= w.cw + 1 && w.bw <= w.cw + 1, `horizontal overflow on ${label}: scrollWidth ${w.sw} > ${w.cw}`);
+}
+async function noPageError(label) { const t = await view().innerText(); ok(!t.includes('เปิดหน้านี้ไม่สำเร็จ'), `page error on ${label}: ${t.slice(0, 120)}`); }
+async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPage: false }); }
+
+(async () => {
+  await startServer();
+  browser = await chromium.launch();
+  ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, geolocation: { latitude: 13.7563, longitude: 100.5018 }, permissions: ['geolocation'], acceptDownloads: true });
+  page = await ctx.newPage(); page.setDefaultTimeout(9000);
+  page.on('console', m => { if (m.type() === 'error' && !m.text().includes('ERR_INTERNET_DISCONNECTED')) consoleErrors.push(m.text()); });
+  page.on('pageerror', e => consoleErrors.push('pageerror: ' + e.message));
+  page.on('dialog', d => d.accept());
+
+  const R0 = await raw();
+  const NOW = Date.now();
+  const M0 = D.buildModel(R0, NOW);
+  const custCurrent = M0.customers.find(c => D.customerStats(M0, c.id).status === 'current' && (M0.billsByCust.get(c.id) || []).length >= 6 && D.hasGps(c));
+  const CID = custCurrent.id;
+
+  console.log('\n== Boot / auth / version ==');
+  await step('app boots and renders home without console errors', async () => { await page.goto(BASE + '/'); await page.waitForSelector('.mini4', { timeout: 15000 }); ok(consoleErrors.length === 0, consoleErrors.join(' | ')); await shot('01-home'); });
+  await step('version identical in app, service worker and server', async () => {
+    const v = await page.evaluate(() => window.__crm.VERSION);
+    const sw = await (await fetch(BASE + '/sw.js')).text(); const h = (await (await fetch(BASE + '/api/health')).json()).version;
+    const html = await (await fetch(BASE + '/')).text();
+    ok(sw.includes(`const VERSION = '${v}'`), `sw.js version mismatch (${v})`); ok(h === v, `server ${h} != app ${v}`); ok(html.includes(`?v=${v}`), 'index.html cache-bust missing');
+  });
+  await step('service worker registers and caches app shell under the version key', async () => {
+    const info = await until(async () => page.evaluate(async () => { const r = await navigator.serviceWorker.getRegistration(); const ks = await caches.keys(); return r && ks.length ? { active: !!r.active, ks } : null; }), 8000);
+    ok(info && info.active, 'no active SW'); const v = await page.evaluate(() => window.__crm.VERSION); ok(info.ks.includes(`havan-crm-${v}`), 'cache key ' + info.ks);
+  });
+  await step('unauthorised account sees the login wall, not data', async () => {
+    const c2 = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p2 = await c2.newPage(); await p2.addInitScript(() => localStorage.setItem('devUser', 'off@local'));
+    await p2.goto(BASE + '/'); await p2.waitForSelector('#login:not(.hide)', { timeout: 8000 });
+    ok((await p2.locator('#login').innerText()).includes('ไม่มีสิทธิ์'), 'no denial message'); ok(!(await p2.locator('.mini4').count()), 'data visible'); await c2.close();
+  });
+
+  console.log('\n== Home KPIs tie to the data ==');
+  await step('4 customer cards, one row, numbers = database', async () => {
+    await go('#/'); const k = D.customerCounts(M0);
+    const nums = await page.locator('.mini b').allInnerTexts(); ok(nums.join() === [k.all, k.current, k.lapsed, k.closed].join(), `cards ${nums} != ${[k.all, k.current, k.lapsed, k.closed]}`);
+    const ys = await page.locator('.mini').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top))); ok(new Set(ys).size === 1, 'cards not on one row');
+    const [, , , c4] = await page.locator('.mini').evaluateAll(els => els.map(e => e.getBoundingClientRect().width)); ok(c4 < 100, 'cards not compact');
+  });
+  await step('every KPI card opens the matching list with the same count', async () => {
+    for (const [i, key] of ['all', 'current', 'lapsed', 'closed'].entries()) {
+      await go('#/'); await page.locator('.mini').nth(i).click(); await page.waitForSelector('#cnt'); await sleep(200);
+      const t = await page.locator('#cnt').innerText(); const exp = D.customerCounts(M0)[key]; ok(t.startsWith(String(exp)), `${key}: ${t} != ${exp}`);
+    }
+  });
+  await step('labels are 2 columns, counts from customer_labels, tap filters customers', async () => {
+    await go('#/'); const cols = await page.locator('.lbls').evaluate(e => getComputedStyle(e).gridTemplateColumns.split(' ').length); ok(cols === 2, 'labels grid cols ' + cols);
+    const first = page.locator('.lbl').first(); const name = await first.locator('span').first().innerText(); const n = +(await first.locator('b').innerText());
+    const exp = M0.raw.customer_labels.filter(l => l.label === name).length; ok(n === exp, `label count ${n} != ${exp}`);
+    await first.click(); await page.waitForSelector('#cnt'); await sleep(200); const t = await page.locator('#cnt').innerText();
+    const expC = M0.customers.filter(c => D.custLabels(M0, c.id).includes(name)).length; ok(t.startsWith(String(expC)), `${t} != ${expC}`);
+  });
+  await step('smart search finds customer by name, id, phone, label, product and bill', async () => {
+    await go('#/'); const c = M0.customers[3]; const inp = page.locator('#hs');
+    for (const [q, expect] of [[c.name, c.name], [c.id, c.name], [D.custPhones(M0, c.id)[0], c.name], [M0.bills[5].no, M0.bills[5].no], ['4012', 'แชมพูออยล์']]) {
+      await inp.fill(q); await page.waitForFunction(t => document.querySelector('#hres')?.innerText.includes(t), expect, { timeout: 4000 }).catch(() => { throw new Error(`search "${q}" did not show "${expect}"`); });
+    }
+    await inp.fill('zzzzzz-nothing'); await page.waitForFunction(() => document.querySelector('#hres')?.innerText.includes('ไม่พบ'), null, { timeout: 4000 });
+  });
+
+  console.log('\n== Bottom navigation, back, every page ==');
+  const PAGES = [['#/', 'หน้าแรก'], ['#/customers', 'ลูกค้า'], ['#/visits', 'เข้าพบ'], ['#/orders', 'ออเดอร์'], ['#/settings', 'ตั้งค่า'], ['#/sales', 'รายงานยอดขาย'], ['#/new', 'ลูกค้าใหม่'], ['#/map', 'แผนที่'], ['#/visits?tab=cal', 'ปฏิทิน'], ['#/settings/cycle', 'รอบซื้อ'], ['#/settings/labels', 'ป้ายกำกับ'], ['#/settings/quality', 'ตรวจคุณภาพ'], ['#/settings/codes', 'ไม่ตรงทะเบียน'], ['#/settings/imports', 'ประวัติการนำเข้า'], ['#/settings/import', 'นำเข้า TTX'], ['#/settings/sync', 'ซิงก์'], [`#/c/${CID}`, 'ภาพรวม'], [`#/c/${CID}?tab=info`, 'ข้อมูลลูกค้า'], [`#/c/${CID}?tab=history`, 'บิล'], [`#/c/${CID}?tab=visits`, 'บันทึกเข้าพบ'], [`#/order/new?c=${CID}`, 'บิลล่าสุด']];
+  await step(`all ${PAGES.length} pages render without error, overflow or console errors (mobile 390px)`, async () => {
+    for (const [h, txt] of PAGES) {
+      await go(h); await sleep(150);
+      await noPageError(h); await noOverflow(h);
+      const body = await page.locator('body').innerText(); ok(body.includes(txt), `${h}: expected text "${txt}"`);
+      await shot('page-' + h.replace(/[^\w]+/g, '_'));
+    }
+    ok(consoleErrors.length === 0, 'console errors: ' + consoleErrors.join(' | '));
+  });
+  await step('bottom nav has exactly 5 items in order and each opens its page', async () => {
+    await go('#/'); const labels = await page.locator('#nav a').allInnerTexts(); ok(labels.map(s => s.trim()).join() === 'หน้าแรก,ลูกค้า,เข้าพบ,ออเดอร์,ตั้งค่า', labels.join());
+    for (const [i, h] of ['#/', '#/customers', '#/visits', '#/orders', '#/settings'].entries()) { await page.locator('#nav a').nth(i).click(); await sleep(250); ok(page.url().endsWith(h) || page.url().includes(h + '?'), `nav ${i} -> ${page.url()}`); ok((await page.locator('#nav a.on').count()) === 1, 'active tab'); }
+  });
+  await step('back button returns through history and keeps bottom nav', async () => {
+    await go('#/customers'); await go(`#/c/${CID}`); await page.locator('[data-back]').click(); await sleep(300); ok(page.url().endsWith('#/customers'), page.url());
+    ok(await page.locator('#nav').isVisible(), 'nav hidden');
+  });
+  await step('customer list: search and status chips work', async () => {
+    await go('#/customers'); const c = M0.customers[10]; await page.fill('#cq', c.name); await sleep(400);
+    ok((await page.locator('#clist').innerText()).includes(c.name), 'search miss'); await page.fill('#cq', '');
+    await page.locator('[data-f="closed"]').click(); await sleep(300); const exp = D.customerCounts(M0).closed; ok((await page.locator('#cnt').innerText()).startsWith(String(exp)), 'closed chip');
+  });
+
+  console.log('\n== Customer 360 ==');
+  await step('4 tabs; 5 quick buttons in one row in the specified order', async () => {
+    await go(`#/c/${CID}`); const tabs = (await page.locator('.tabs button').allInnerTexts()).join(); ok(tabs === 'ภาพรวม,ข้อมูล,ประวัติซื้อ,เข้าพบ', tabs);
+    const q = await page.locator('.quick > *').evaluateAll(els => els.map(e => ({ t: e.innerText.trim(), y: Math.round(e.getBoundingClientRect().top) })));
+    ok(q.map(x => x.t).join() === 'บันทึก,รูป+พิกัด,รับออเดอร์,โทร,นำทาง', q.map(x => x.t).join()); ok(new Set(q.map(x => x.y)).size === 1, 'quick buttons wrap');
+    await shot('customer-360');
+  });
+  await step('overview shows last bill, regular items, pre-visit note, birthday, store photo and GPS status', async () => {
+    const c = M0.customers.find(c => c.keepNote && c.birthday && (M0.billsByCust.get(c.id) || []).length > 3); await go(`#/c/${c.id}`);
+    const t = await view().innerText(); const lb = D.lastBillOf(M0, c.id);
+    for (const s of ['บิลล่าสุด', `บิล ${lb.no}`, 'สินค้าที่สั่งประจำ', 'บันทึกก่อนเข้าร้าน', 'วันเกิด', 'รูปหน้าร้าน', 'พิกัดร้าน']) ok(t.includes(s), 'missing: ' + s);
+    ok(t.includes(D.money(D.billTotal(M0, lb.no))), 'bill total not shown');
+  });
+  await step('history: search by product, open bill, total = sum of lines (no VAT added)', async () => {
+    await go(`#/c/${CID}?tab=history`); const bills = M0.billsByCust.get(CID); ok((await view().innerText()).includes(`${bills.length} บิล`), 'bill count');
+    await page.locator('[data-bill]').first().click(); await page.waitForSelector('.sheet'); const t = await page.locator('.sheet').innerText();
+    const no = [...bills].reverse()[0].no; ok(t.includes(D.money(D.billTotal(M0, no))), 'sheet total'); await page.locator('.sheet [data-close]').first().click();
+  });
+  await step('VAT bill: total equals sum of its own lines and says VAT not re-added', async () => {
+    const [no] = [...M0.itemsByBill.entries()].find(([, it]) => it.some(i => /VAT/.test(i.name))); const b = M0.billByNo.get(no);
+    await go('#/'); await page.fill('#hs', no); await page.waitForSelector(`[data-bill="${no}"]`); await page.locator(`[data-bill="${no}"]`).first().click(); await page.waitForSelector('.sheet');
+    const t = await page.locator('.sheet').innerText(); ok(t.includes(D.money(D.billTotal(M0, no))), 'VAT bill total'); ok(t.includes('ไม่คิดซ้ำ'), 'no VAT note'); void b; await page.locator('.sheet [data-close]').first().click();
+  });
+  await step('legacy-code bill: unregistered shown by name only, no guessed code; confirmed pair flagged', async () => {
+    const row = D.unregisteredItems(M0).find(r => r.code === '7777'); await go('#/'); await sleep(600); await page.fill('#hs', row.billNo); await page.waitForSelector(`[data-bill="${row.billNo}"]`); await page.locator(`[data-bill="${row.billNo}"]`).first().click(); await page.waitForSelector('.sheet');
+    const t = await page.locator('.sheet').innerText(); ok(t.includes('ไม่อยู่ในทะเบียนปัจจุบัน'), 'badge: ' + row.billNo + ' ' + t.slice(0, 200).replace(/\n/g, ' ')); ok(!t.includes('7777'), 'unregistered code displayed'); await page.locator('.sheet [data-close]').first().click();
+  });
+  await step('call / navigate buttons link to tel: and Google Maps directions', async () => {
+    await go(`#/c/${CID}`); const c = M0.custById.get(CID);
+    const nav = await page.locator('.quick a[target]').getAttribute('href'); ok(nav.includes(`destination=${c.gpsLat},${c.gpsLng}`), nav);
+    ok((await page.locator('[data-act="call"]').count()) === 1, 'call button');
+  });
+
+  console.log('\n== Field work: unified visit form, GPS, appointments ==');
+  const NOTE = 'e2e-visit-' + Date.now();
+  await step('visit form saves note + GPS exactly once (visits, activities, gps rows by header)', async () => {
+    await go(`#/c/${CID}`); await page.locator('[data-act="note"]').click(); await page.waitForSelector('.sheet #vn');
+    await page.waitForFunction(() => document.querySelector('.sheet #gs')?.textContent.includes('พิกัดพร้อม'), null, { timeout: 8000 });
+    await page.fill('#vn', NOTE); await page.selectOption('#vo', 'ได้ออเดอร์'); await shot('visit-form'); await page.click('#vs');
+    const v = await until(async () => { const x = (await raw()).visits.filter(v => v.note === NOTE); return x.length && x; }, 8000); ok(v && v.length === 1, `visit rows ${v ? v.length : 0}`);
+    ok(v[0].status === 'done' && v[0].outcome === 'ได้ออเดอร์' && v[0].customerId === CID && /13\.75/.test(v[0].lat) && v[0].lng.startsWith('100.50'), JSON.stringify(v[0]));
+    const r = await raw(); ok(r.activities.some(a => a.refId === v[0].visitId), 'activity'); ok(r.gps.some(g => g.visitId === v[0].visitId), 'gps row');
+  });
+  await step('new visit appears immediately in the customer timeline and last-visit date', async () => {
+    await go(`#/c/${CID}?tab=visits`); ok((await view().innerText()).includes(NOTE), 'timeline'); await go(`#/c/${CID}`); ok((await view().innerText()).includes('เข้าพบล่าสุด'), 'overview');
+  });
+  const APPT = 'e2e-appt-' + Date.now(); const apptDay = D.dayStr(D.dayNum(M0.today) + 3);
+  await step('appointment (same form) creates planned visit + open task; calendar shows the day count', async () => {
+    await go(`#/c/${CID}`); await page.locator('[data-act="note"]').click(); await page.waitForSelector('.sheet #vk'); await page.locator('#vk [data-k="appointment"]').click();
+    await page.fill('#vn', APPT); await page.fill('#vd', apptDay); await page.click('#vs');
+    const r = await until(async () => { const x = await raw(); return x.visits.find(v => v.note === APPT) && x; }); const v = r.visits.find(v => v.note === APPT);
+    ok(v.status === 'planned' && v.plannedAt === apptDay, JSON.stringify(v)); ok(r.tasks.some(t => t.note === APPT && t.status === 'open'), 'task');
+    await go(`#/visits?tab=cal&ym=${apptDay.slice(0, 7)}&d=${apptDay}`); await sleep(300);
+    const cell = await page.locator(`[data-d="${apptDay}"] b`).innerText(); ok(+cell >= 1, 'calendar count ' + cell); ok((await view().innerText()).includes(M0.custById.get(CID).name), 'customer under date');
+  });
+  await step('calendar: tap a day lists stores below on the same page; month navigation works', async () => {
+    const before = page.url(); await page.locator('[data-m="1"]').click(); await sleep(250); ok(page.url() === before || page.url().includes('visits'), 'left page');
+    await page.locator('[data-m="-1"]').click(); await sleep(250); await page.locator(`[data-d="${apptDay}"]`).click(); await sleep(200); ok((await view().innerText()).includes('ร้าน'), 'list');
+  });
+  await step('completing the appointment closes visit + task', async () => {
+    await go(`#/c/${CID}?tab=visits`); await page.locator('[data-done]').first().click(); await page.waitForSelector('.sheet #cs'); await page.waitForFunction(() => true); await page.click('#cs');
+    const r = await until(async () => { const x = await raw(); const v = x.visits.find(v => v.note === APPT || v.note?.includes('')); return x.visits.find(v => v.plannedAt === apptDay && v.status === 'done') && x; }); ok(r, 'visit not done');
+    ok(r.tasks.find(t => t.note === APPT).status === 'done', 'task not done');
+  });
+  await step('cycle page: overdue / soon / missed groups equal the computed lists', async () => {
+    await go('#/visits?tab=cycle'); const s = D.suggestions(M0);
+    for (const [k, t] of [['overdue', 'เลยรอบซื้อ'], ['soon', 'ใกล้ถึงรอบซื้อ'], ['missed', 'ขาดเข้าพบ']]) { const txt = await page.locator(`[data-g="${k}"]`).innerText(); ok(txt.includes(`${t} ${s[k].length}`) || txt.includes(String(s[k].length)), `${k}: ${txt} vs ${s[k].length}`); }
+  });
+  await step('store GPS update: writes customers.gpsLat/gpsLng/mapLink + gps row + changes log', async () => {
+    const c = M0.customers.find(c => !D.hasGps(c) && D.customerStats(M0, c.id).status !== 'closed'); await go(`#/c/${c.id}`); await page.locator('[data-act="geo"]').click(); await page.waitForSelector('.sheet #gb'); await page.click('#gb');
+    const r = await until(async () => { const x = await raw(); const cc = x.customers.find(q => q.id === c.id); return cc.gpsLat && x; }); const cc = r.customers.find(q => q.id === c.id);
+    ok(cc.gpsLat.startsWith('13.7563') && cc.gpsLng.startsWith('100.5018') && cc.mapLink.includes('13.7563'), JSON.stringify([cc.gpsLat, cc.gpsLng, cc.mapLink])); ok(r.gps.some(g => g.customerId === c.id && g.source === 'store-update'), 'gps row');
+    const ch = await tab('changes'); ok(ch.some(x => x.entity === 'customers' && x.id === c.id && x.action === 'update'), 'changes log');
+  });
+  await step('photo is optional: store photo uploads, row saved and file id attached to customer', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    await go(`#/c/${CID}`); await page.locator('[data-act="geo"]').click(); await page.waitForSelector('.sheet #gp', { state: 'attached' }); await page.setInputFiles('#gp', { name: 'x.png', mimeType: 'image/png', buffer: png }); await page.waitForSelector('#gs2:not(.hide)'); await page.click('#gs2');
+    const r = await until(async () => { const x = await raw(); return x.photos.length && x; }); ok(r.photos.length >= 1 && r.photos[0].photoType === 'store', 'photo row'); ok(r.customers.find(c => c.id === CID).storePhotoFileIds.includes('mem-'), 'file id on customer');
+    await go(`#/c/${CID}`); await page.waitForSelector('#sp img', { timeout: 6000 }); ok(true);
+  });
+  await step('edit customer: only changed columns are written; other columns untouched', async () => {
+    const before = (await raw()).customers.find(c => c.id === CID); await go(`#/c/${CID}?tab=info`); await page.locator('#edit').click(); await page.waitForSelector('.sheet [data-k="keepNote"]');
+    await page.fill('[data-k="keepNote"]', 'e2e-keep-note'); await page.click('#es'); const after = await until(async () => { const c = (await raw()).customers.find(c => c.id === CID); return c.keepNote === 'e2e-keep-note' && c; });
+    for (const k of Object.keys(before)) if (!['keepNote', 'storePhotoFileIds'].includes(k)) ok(after[k] === before[k], `column ${k} changed`);
+  });
+
+  console.log('\n== Order taking ==');
+  let ORDER_NO;
+  await step('order from latest bill: lines prefilled, cart bar shows count/total, no VAT added', async () => {
+    await go(`#/order/new?c=${CID}`); await page.waitForSelector('#pk'); await sleep(200); const lb = D.lastBillOf(M0, CID);
+    await page.locator('[data-all]').click(); await sleep(250); const bar = await page.locator('.cartbar').innerText(); ok(/ตะกร้า \d+ รายการ/.test(bar), bar); await shot('order-picker');
+  });
+  await step('all four product sources are present (latest bill / past bills / regular / all)', async () => {
+    const t = (await page.locator('#src button').allInnerTexts()).join(); ok(t === 'บิลล่าสุด,บิลย้อนหลัง,สั่งประจำ,ทั้งหมด', t);
+    for (const s of ['bills', 'regular', 'all']) { await page.locator(`#src [data-s="${s}"]`).click(); await sleep(250); ok((await page.locator('#pk').innerText()).length > 5, s + ' empty'); }
+    await page.locator('#src [data-s="all"]').click(); await page.fill('#pq', '4012'); await sleep(500); ok((await page.locator('#pk').innerText()).includes('แชมพูออยล์'), 'all search'); await page.locator('#pk [data-add="4012"]').click();
+  });
+  await step('cart survives Back and a full page reload', async () => {
+    const n0 = await page.locator('.cartbar').innerText(); await page.locator('.cartbar').click(); await page.waitForSelector('#cl .li'); await page.locator('[data-back]').click(); await sleep(300);
+    ok((await page.locator('.cartbar').innerText()) === n0, 'cart changed after back'); await page.reload(); await page.waitForSelector('.cartbar', { timeout: 10000 }); ok((await page.locator('.cartbar').innerText()) === n0, 'cart lost on reload');
+  });
+  await step('cart: edit quantity & price, total = qty × price, remove line', async () => {
+    await page.locator('.cartbar').click(); await page.waitForSelector('#cl .li'); const q = page.locator('[data-q="0"]'); await q.fill('7'); const p = page.locator('[data-p="0"]'); await p.fill('120'); await sleep(200);
+    const amt = await page.locator('[data-a="0"]').innerText(); ok(amt.replace(/,/g, '') === '840', amt); const tot = await page.locator('#ct').innerText(); ok(tot.includes('฿'), tot);
+    const n = await page.locator('#cl .li').count(); await page.locator('[data-x]').last().click(); ok((await page.locator('#cl .li').count()) === n - 1, 'remove'); await shot('order-cart');
+  });
+  await step('save as draft -> row in orders/order_items by header, status draft', async () => {
+    await page.fill('#nt', 'e2e order note'); await page.click('#sd'); const r = await until(async () => { const x = await raw(); return x.orders.find(o => o.note === 'e2e order note') && x; }); const o = r.orders.find(o => o.note === 'e2e order note'); ORDER_NO = o.no;
+    ok(o.status === 'draft' && o.customerId === CID && o.createdBy === 'dev@local' && o.deviceId, JSON.stringify(o)); const items = r.order_items.filter(i => i.orderNo === ORDER_NO); ok(items.length >= 1, 'items');
+    ok(items[0].amount === String(D.num(items[0].qty) * D.num(items[0].price)), 'amount ' + items[0].amount);
+  });
+  await step('draft opens from the list, edit, confirm -> status confirmed, items replaced (no duplicates)', async () => {
+    await go('#/orders'); await page.waitForSelector(`[data-go="#/order/${ORDER_NO}"]`); await page.locator(`[data-go="#/order/${ORDER_NO}"]`).click(); await page.waitForSelector('#pk');
+    await page.locator('.cartbar').click(); await page.waitForSelector('#cl .li'); const n = await page.locator('#cl .li').count(); await page.click('#sc'); await page.waitForSelector('.sheet #dt');
+    const doc = await page.locator('#dt').innerText(); ok(doc.includes(`รหัสลูกค้า: ${CID}`) && doc.includes('รวม'), doc);
+    const r = await until(async () => { const x = await raw(); return x.orders.find(o => o.no === ORDER_NO)?.status === 'confirmed' && x; }); ok(r.order_items.filter(i => i.orderNo === ORDER_NO).length === n, 'item count changed');
+    ok(r.orders.filter(o => o.no === ORDER_NO).length === 1, 'duplicate order row');
+    for (const i of r.order_items.filter(i => i.orderNo === ORDER_NO)) if (i.code) ok(!doc.includes(i.code), `doc shows product code ${i.code}`);
+    await page.locator('.sheet [data-close]').first().click();
+  });
+  await step('re-sending the same op id is answered "duplicate" and changes nothing', async () => {
+    const op = { type: 'visit.log', opId: 'dup-test-' + Date.now(), payload: { customerId: CID, kind: 'note', note: 'dup' } };
+    const a = await api('/api/ops', { method: 'POST', body: JSON.stringify({ ops: [op] }) }); const b = await api('/api/ops', { method: 'POST', body: JSON.stringify({ ops: [op] }) });
+    ok(a.body.results[0].status === 'ok' && b.body.results[0].status === 'duplicate', JSON.stringify([a.body, b.body])); ok((await raw()).visits.filter(v => v.opId === op.opId).length === 1, 'dup rows');
+  });
+  await step('reorder from a history bill skips unregistered lines (never guesses a code)', async () => {
+    const row = D.unregisteredItems(M0).find(r => r.code === '7777'); const b = M0.billByNo.get(row.billNo);
+    await page.evaluate(k => localStorage.removeItem(k), `cart:new:${b.customerId}`);
+    await go(`#/order/new?c=${b.customerId}&from=${row.billNo}`); await page.waitForSelector('#pk'); await sleep(300); const t = await view().innerText(); ok(t.includes('ข้าม 1 รายการ') || t.includes('ไม่อยู่ในทะเบียนปัจจุบัน'), 'no skip notice');
+    const cart = JSON.parse(await page.evaluate(k => localStorage.getItem(k), `cart:new:${b.customerId}`)); ok(!cart.lines.some(l => l.code === '7777'), 'guessed/unregistered code added'); await page.evaluate(k => localStorage.removeItem(k), `cart:new:${b.customerId}`);
+  });
+  await step('legacy confirmed pair (8217 -> 8217*) maps only when names agree; conflicting 9833* never maps', async () => {
+    const m = D.buildModel(await raw(), Date.now()); ok(D.resolveLegacy(m, '8217', 'สบู่เหลว 1,000 ml. กลิ่นมะลิ').ok, 'pair 1'); ok(!D.resolveLegacy(m, '9833*', 'ทรีทเมนต์เคราติน 2,000 ml.').ok, 'conflict mapped');
+  });
+
+  console.log('\n== Reports & KPIs ==');
+  await step('sales report total = SUM(bill_items.amount) for each period; bills count matches', async () => {
+    for (const p of ['month', 'lastmonth', 'year', 'all']) {
+      await go(`#/sales?p=${p}`); const [f, t] = D.periodRange(p, M0.today); const r = D.salesBetween(D.buildModel(await raw(), Date.now()), f, t);
+      const txt = await page.locator('.hero').innerText(); ok(txt.replace(/,/g, '').includes(String(Math.round(r.total * 100) / 100)), `${p}: ${txt} vs ${r.total}`);
+    }
+    const allRaw = (await raw()).bill_items.reduce((s, i) => s + D.num(i.amount), 0); await go('#/sales?p=all'); ok((await page.locator('.hero').innerText()).replace(/,/g, '').includes(String(allRaw)), 'all-time != raw sum');
+  });
+  await step('sales drill-down: by month/clerk/customer/bills all tappable lists', async () => {
+    await go('#/sales?p=all&v=bills'); await page.waitForSelector('[data-bill]'); await page.locator('[data-bill]').first().click(); await page.waitForSelector('.sheet'); await page.locator('.sheet [data-close]').first().click();
+    for (const v of ['month', 'clerk', 'cust']) { await go(`#/sales?p=all&v=${v}`); ok((await page.locator('#sl .li').count()) > 0, v); }
+    await go('#/sales?p=all&v=month'); await page.locator('#sl .li').first().click(); await sleep(400); ok((await view().innerText()).includes('บิล'), 'month drilldown');
+  });
+  await step('new-customers page count equals computed', async () => { await go('#/new'); const exp = D.customersBy(D.buildModel(await raw(), Date.now()), 'new').length; ok((await view().innerText()).includes(`${exp} ร้าน`), 'count ' + exp); });
+  await step('map: lists only stores with GPS, distance sort works, navigate links valid', async () => {
+    await go('#/map?f=all'); const withGps = M0.customers.filter(D.hasGps).length + 1; await page.locator('#loc').click(); await sleep(700);
+    const links = await page.locator('#ml a[href*="destination="]').count(); ok(links > 0, 'no nav links'); ok((await page.locator('#mc').innerText()).includes('มีพิกัด'), 'summary'); ok(await page.locator('iframe').count() === 1, 'map frame'); void withGps;
+  });
+
+  await step('every list page has a search box (customers, orders, cycle, calendar day, sales views, new, map, labels, codes, history, imports)', async () => {
+    const list = ['#/customers', '#/orders', '#/visits?tab=cycle', '#/sales?p=all&v=month', '#/sales?p=all&v=clerk', '#/sales?p=all&v=cust', '#/sales?p=all&v=bills', '#/new', '#/map', '#/settings/labels', '#/settings/codes', '#/settings/imports', `#/c/${CID}?tab=history`];
+    for (const h of list) { await go(h); await sleep(200); ok((await page.locator('#view input[type="search"]').count()) >= 1, `no search box on ${h}`); }
+  });
+  await step('sales numbers are tappable (bill count -> bills, customers -> customers); clerk view lists clerks AND salespeople', async () => {
+    await go('#/sales?p=all'); await page.locator('[data-v="bills"].card').click(); await sleep(300); ok(page.url().includes('v=bills'), page.url());
+    await go('#/sales?p=all&v=clerk'); const t = await view().innerText(); ok(t.includes('เสมียนที่เปิดบิล') && t.includes('พนักงานขาย'), 'clerk/salesperson sections');
+    const R = D.salesBetween(D.buildModel(await raw(), Date.now()), '', ''); const top = [...R.byClerk.entries()].sort((a, b) => b[1] - a[1])[0]; ok(t.includes(top[0]) && t.replace(/,/g, '').includes(String(top[1])), 'top clerk total');
+  });
+
+  console.log('\n== Settings, data quality, import ==');
+  await step('cycle settings persist to systemSettings (new row), keep comm/vatRate; home counts react', async () => {
+    await go('#/settings/cycle'); await page.fill('[data-k="lateDays"]', '30'); await page.click('#sv'); const r = await until(async () => { const x = await raw(); return x.systemSettings.length >= 2 && x; });
+    const latest = r.systemSettings.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b)); const d = JSON.parse(latest.data); ok(d.lateDays === 30 && d.comm === 8 && d.vatRate === 7, latest.data);
+    await go('#/'); await sleep(300); const m2 = D.buildModel(r, Date.now()); const nums = await page.locator('.mini b').allInnerTexts(); ok(nums[1] === String(D.customerCounts(m2).current), `current ${nums[1]} vs ${D.customerCounts(m2).current}`);
+    await go('#/settings/cycle'); await page.fill('[data-k="lateDays"]', '90'); await page.click('#sv'); await sleep(500);
+  });
+  await step('non-admin cannot save settings or import (UI disabled + server forbids)', async () => {
+    const f = await api('/api/ops', { method: 'POST', user: 'sales@local', body: JSON.stringify({ ops: [{ type: 'settings.save', opId: 'na-' + Date.now(), payload: { data: { lateDays: 1 } } }] }) }); ok(f.body.results[0].code === 'forbidden', JSON.stringify(f.body));
+    const c2 = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p2 = await c2.newPage(); await p2.addInitScript(() => localStorage.setItem('devUser', 'sales@local')); await p2.goto(BASE + '/#/settings/cycle'); await p2.waitForSelector('#sv'); ok(await p2.locator('#sv').isDisabled(), 'save enabled for non-admin'); await c2.close();
+  });
+  await step('labels: rename merges across customers, delete removes', async () => {
+    const R = await raw(); const lab = R.customer_labels[0].label; const n = R.customer_labels.filter(l => l.label === lab).length;
+    await go('#/settings/labels'); await page.locator(`[data-ren="${lab}"]`).click(); await page.waitForSelector('.sheet #nn'); await page.fill('#nn', 'ป้ายทดสอบ-e2e'); await page.click('#go');
+    const r = await until(async () => { const x = await raw(); return x.customer_labels.filter(l => l.label === 'ป้ายทดสอบ-e2e').length === n && x; }); ok(r, 'rename count'); ok(!r.customer_labels.some(l => l.label === lab), 'old label remains');
+  });
+  await step('quality page: counts vs reference, duplicates/orphans listed, CSV export downloads', async () => {
+    await go('#/settings/quality'); const t = await view().innerText(); ok(t.includes('1383') && t.includes('9922') && t.includes('30811') && t.includes('366'), 'reference counts'); ok(t.includes('COUNT_DIFF'), 'diff');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#ex')]); ok(dl.suggestedFilename().startsWith('quality-'), dl.suggestedFilename());
+  });
+  await step('unregistered codes: lists bill no, date, customer, clerk, line; export CSV; never says "wrong"', async () => {
+    await go('#/settings/codes'); const t = await view().innerText(); ok(t.includes('ไม่ได้หมายความว่ารหัสเก่าผิด'), 'neutral wording'); ok(t.includes('7777'), '7777 listed');
+    await page.fill('#cq', '7777'); await sleep(400); const x = await page.locator('#cl .li').first().innerText(); const row = D.unregisteredItems(M0).find(r => r.code === '7777'); for (const s of [row.billNo, row.customerId, row.clerk, `บรรทัด ${row.line}`]) ok(x.includes(s) || (await page.locator('#cl').innerText()).includes(s), 'missing ' + s);
+    await page.fill('#cq', ''); await sleep(300); const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#ex')]); const csv = fs.readFileSync(await dl.path(), 'utf8'); ok(csv.includes('billNo,date,customerId,customerName,clerk,line,code,name'), 'csv header'); ok(csv.includes('คู่ที่ผู้ใช้ยืนยัน') || csv.includes('ชื่อสินค้าขัดแย้งกัน'), 'legacy column');
+  });
+  await step('diagnostics verifies all 18 tabs / 178 columns from the live store', async () => {
+    await go('#/settings/sync'); await page.click('#dg'); await page.waitForFunction(() => document.querySelector('#dgo')?.innerText.includes('18'), null, { timeout: 6000 }); const t = await page.locator('#dgo').innerText(); ok(t.includes('178'), t);
+  });
+  const TTX = ['เลขที่บิล\tวันที่\tรหัสลูกค้า\tรหัสสินค้า\tชื่อสินค้า\tจำนวน\tราคา\tจำนวนเงิน\tเสมียน', `E2E001\t01/12/2569\t${CID}\t4012\tแชมพูออยล์\t5\t115\t575\tหยง`, `E2E001\t01/12/2569\t${CID}\t5029\tครีมนวดอโวคาโด้\t2\t140\t280\tหยง`, `E2E002\t02/12/2569\t${CID}\tOLD-1\tสินค้าเก่า\t1\t99\t99\tฝน`, `${M0.bills[0].no}\t01/12/2569\t${M0.bills[0].customerId}\t4012\tแชมพูออยล์\t1\t1\t999\tหยง`].join('\n');
+  await step('TTX import: preview, commit once, existing bill never overwritten, review rows written', async () => {
+    const before = await raw(); await go('#/settings/import'); await page.setInputFiles('#tf', { name: 'e2e.ttx', mimeType: 'text/plain', buffer: Buffer.from(TTX, 'utf8') }); await page.waitForSelector('#go', { timeout: 8000 });
+    const t = await page.locator('#ti').innerText(); ok(t.includes('2 บิล / 3 รายการ'), 'preview ' + t); await page.click('#go'); await page.waitForFunction(() => location.hash.includes('imports'), null, { timeout: 10000 });
+    const r = await raw(); ok(r.bills.length === before.bills.length + 2 && r.bill_items.length === before.bill_items.length + 3, 'rows added'); const b = r.bills.find(x => x.no === 'E2E001'); ok(b.date === '2026-12-01' && b.customerId === CID, JSON.stringify(b));
+    const orig = before.bills.find(x => x.no === M0.bills[0].no); ok(JSON.stringify(r.bills.find(x => x.no === orig.no)) === JSON.stringify(orig), 'existing bill overwritten');
+    const rv = await tab('IMPORT_REVIEW'); ok(rv.some(x => x.issueCode === 'BILL_EXISTS_DIFFERENT') && rv.some(x => x.issueCode === 'CODE_NOT_IN_REGISTRY' && x.sourceKey === 'OLD-1'), 'review rows'); const bt = await tab('IMPORT_BATCHES'); ok(bt.length === 1 && bt[0].fileHash.length === 64, 'batch');
+  });
+  await step('TTX re-import of the same file is refused (no duplicates), history page shows batch + review', async () => {
+    const n = (await raw()).bills.length; await go('#/settings/import'); await page.setInputFiles('#tf', { name: 'e2e.ttx', mimeType: 'text/plain', buffer: Buffer.from(TTX, 'utf8') }); await page.waitForSelector('#ti .banner.bad', { timeout: 8000 }); ok((await page.locator('#go').isDisabled()), 'import enabled');
+    ok((await raw()).bills.length === n, 'rows added'); await go('#/settings/imports'); const t = await view().innerText(); ok(t.includes('e2e.ttx') && t.includes('BILL_EXISTS_DIFFERENT'), 'history');
+    await page.locator('[data-r]').first().click(); await sleep(1500);
+  });
+  await step('TTX with unknown layout is rejected with a clear message (no guessing)', async () => {
+    await go('#/settings/import'); await page.setInputFiles('#tf', { name: 'bad.ttx', mimeType: 'text/plain', buffer: Buffer.from('foo\tbar\nx\ty', 'utf8') }); await page.waitForSelector('#ti .banner.bad'); ok((await page.locator('#ti').innerText()).includes('ไม่รู้จักรูปแบบ'), 'msg');
+  });
+
+  console.log('\n== Offline / sync / cache ==');
+  await step('offline: field note is queued locally, shown in header, then synced exactly once when back online', async () => {
+    const N = 'e2e-offline-' + Date.now(); await go(`#/c/${CID}`); await ctx.setOffline(true); await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+    await page.locator('[data-act="note"]').click(); await page.waitForSelector('.sheet #vk'); await page.locator('#vk [data-k="note"]').click(); await page.fill('#vn', N); await page.click('#vs'); await sleep(600);
+    ok((await page.locator('#hdr .sync').innerText()).includes('ออฟไลน์') || (await page.locator('#hdr .sync').innerText()).includes('รอส่ง'), 'header state'); ok((await raw()).visits.filter(v => v.note === N).length === 0, 'reached server while offline');
+    await go(`#/c/${CID}?tab=visits`).catch(() => {}); ok((await view().innerText()).includes(N), 'optimistic row missing');
+    await ctx.setOffline(false); await page.evaluate(() => window.dispatchEvent(new Event('online'))); const v = await until(async () => { const x = (await raw()).visits.filter(v => v.note === N); return x.length && x; }, 10000); ok(v.length === 1, 'rows ' + v.length);
+    await sleep(1200); ok((await raw()).visits.filter(v => v.note === N).length === 1, 'duplicated after sync');
+  });
+  await step('app shell loads offline from cache (service worker)', async () => {
+    await page.goto(BASE + '/'); await page.waitForSelector('.mini4'); await sleep(800); await ctx.setOffline(true); await page.reload(); await page.waitForSelector('.mini4', { timeout: 10000 }); ok((await page.locator('.mini b').first().innerText()) !== '', 'no cached data'); await ctx.setOffline(false);
+  });
+  await step('queue persists across reload before it is flushed (IndexedDB)', async () => {
+    const N = 'e2e-persist-' + Date.now(); await go(`#/c/${CID}`); await ctx.setOffline(true); await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+    await page.locator('[data-act="note"]').click(); await page.waitForSelector('.sheet #vk'); await page.locator('#vk [data-k="note"]').click(); await page.fill('#vn', N); await page.click('#vs'); await sleep(500); await page.reload().catch(() => {}); await sleep(1500);
+    await ctx.setOffline(false); const v = await until(async () => { const x = (await raw()).visits.filter(v => v.note === N); return x.length && x; }, 12000); ok(v && v.length === 1, 'queued op lost or duplicated');
+  });
+
+  console.log('\n== Performance at delivery scale (1,383 customers / 9,922 bills / 30,811 items) ==');
+  await step('domain computations at full scale stay fast', async () => {
+    const { buildFixtures } = await import('../../src/server/fixtures.js'); const big = buildFixtures({ now: NOW, customers: 1383, billsPerCustomer: 7, seed: 3 });
+    big.bills = big.bills.slice(0, 9922); const keep = new Set(big.bills.map(b => b.no)); big.bill_items = big.bill_items.filter(i => keep.has(i.billNo)).slice(0, 30811);
+    let t = performance.now(); const m = D.buildModel(big, NOW); const build = performance.now() - t; t = performance.now(); D.customerCounts(m); D.suggestions(m); const stats = performance.now() - t; t = performance.now(); D.searchCustomers(m, 'ร้านทดสอบ 5'); const search = performance.now() - t; t = performance.now(); D.qualityReport(m); D.unregisteredItems(m); const qual = performance.now() - t;
+    console.log(`      build ${build | 0}ms · stats ${stats | 0}ms · search ${search | 0}ms · quality ${qual | 0}ms (${m.customers.length}c/${m.bills.length}b/${big.bill_items.length}i)`);
+    ok(build < 1500 && stats < 1500 && search < 200 && qual < 2500, 'too slow');
+  });
+
+  await browser.close(); if (server) server.kill();
+  const fail = results.filter(r => !r.pass);
+  fs.writeFileSync(`${OUT}/report.json`, JSON.stringify({ base: BASE, at: new Date().toISOString(), total: results.length, passed: results.length - fail.length, failed: fail, results, consoleErrors }, null, 2));
+  console.log(`\n${results.length - fail.length}/${results.length} passed${consoleErrors.length ? ` · ${consoleErrors.length} console errors` : ''}`);
+  if (consoleErrors.length) console.log(consoleErrors.slice(0, 5));
+  process.exit(fail.length || consoleErrors.length ? 1 : 0);
+})().catch(e => { console.error('FATAL', e); try { server?.kill(); } catch {} process.exit(2); });

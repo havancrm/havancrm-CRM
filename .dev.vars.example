@@ -1,0 +1,8 @@
+# Copy to .dev.vars for `wrangler dev` against the REAL sheet (never commit .dev.vars).
+# For safe local work use the built-in memory mode instead:  npm run dev
+DATA_MODE=sheets
+AUTH_MODE=google
+GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+GOOGLE_SA_EMAIL=crm-sheets@your-project.iam.gserviceaccount.com
+GOOGLE_SA_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+DRIVE_FOLDER_ID=
