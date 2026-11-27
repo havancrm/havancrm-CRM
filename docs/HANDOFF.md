@@ -79,4 +79,62 @@ docs/REPORT.md  docs/DEPLOY.md  docs/HANDOFF.md
 - บั๊กสำคัญที่เคยเจอ (มี regression test แล้ว): `flush()` คิวไม่ส่งงาน, ตัวจัดการคลิกซ้อน, เรนเดอร์ซ้ำล้างข้อความที่พิมพ์
 
 ## 11. เอกสารอื่นใน repo
-`docs/REPORT.md` (ผลตรวจรับรอบ 2 ตามข้อ 1–12), `docs/DEPLOY.md` (ขั้นตอน Preview→Production), `README.md`
+- `docs/TESTS.md` รายการทดสอบทีละข้อ (หน่วย 67 · ข้อมูลจริง 5 · E2E 60) — สร้างด้วย `scripts/gen-tests-doc.py`
+- `docs/USER-GUIDE.md` คู่มือใช้งานสำหรับเซลล์
+- `docs/REPORT.md` ผลตรวจรับรอบ 2 ตามข้อ 1–12 · `docs/DEPLOY.md` ขั้นตอน Preview→Production · `README.md`
+
+## 12. ระบบ บัญชี และลิงก์ — เชื่อมอะไรกับใคร
+| รายการ | คืออะไร / ใช้ทำอะไร | บัญชี-เจ้าของ | ลิงก์ | สถานะ |
+|---|---|---|---|---|
+| GitHub repo ใหม่ | โค้ด CRM ใหม่ทั้งหมด | org `havancrm` (ต้องมีสิทธิ์ write; session นี้ push ผ่าน Claude GitHub App) | https://github.com/havancrm/havancrm-CRM (branch `claude/ecstatic-cannon-i4gapq`) | ใช้งานได้ ยังไม่ merge/ไม่มี PR |
+| GitHub repo A | ต้นฉบับ aCRM/ART (อ้างอิงอ่านอย่างเดียว) | org `havancrm` | `havancrm/A` | **session นี้เข้าไม่ได้** ต้องให้สิทธิ์ก่อนเทียบฟังก์ชัน |
+| Google Sheets CRM | ฐานข้อมูลเดียวของ CRM (18 แท็บ) ChatGPT เตรียมให้ | บัญชี Google เจ้าของระบบ (ดูแท็บ `ACCESS` แถวที่โน้ต "เจ้าของระบบ") | https://docs.google.com/spreadsheets/d/1KbM5G_-O24NfRfiAX9eBcp9KBg_GjGXd7aUCKVdfkHY/edit | มีอยู่แล้ว ห้ามสร้างใหม่/ห้ามล้าง |
+| ART / aCRM production | แอปเดิมที่เซลล์ใช้อยู่ | Cloudflare account เดิมของบริษัท | https://acrm.havan-crm.workers.dev | **ห้ามแก้** |
+| CRM ใหม่ (เป้าหมาย) | Worker ชื่อ `crm` บน Cloudflare Free | Cloudflare account เดียวกับ ART (workers.dev subdomain = `havan-crm`) | https://crm.havan-crm.workers.dev | **ยังไม่ deploy** |
+| Cloudflare account | โฮสต์ Worker + static assets | ไม่ทราบชื่อบัญชีที่แน่ชัดจาก session นี้ — ตรวจที่ dash.cloudflare.com → Workers & Pages ว่า `acrm` อยู่บัญชีไหน | https://dash.cloudflare.com | ต้องมีสิทธิ์สร้าง API token / `wrangler login` |
+| Google Cloud project | เปิด Sheets API + Drive API, Service Account, OAuth Client | **ยังไม่มี ต้องสร้าง** (ใช้บัญชี Google ของบริษัท) | https://console.cloud.google.com | ยังไม่ทำ |
+| Service account | Worker อ่าน/เขียนชีตแทนผู้ใช้ | สร้างใน Google Cloud แล้วแชร์ชีตให้เป็น Editor | — | ยังไม่ทำ |
+| OAuth Client ID (Web) | ให้ผู้ใช้ล็อกอินด้วย Google | Google Cloud project เดียวกัน | — | ยังไม่ทำ |
+| แท็บ `ACCESS` | รายชื่ออีเมลที่ใช้แอปได้ (`active`, `role=admin`) | เจ้าของระบบแก้ในชีต | (ในชีตข้างบน) | มีอยู่ (6 แถว ทุกแถว admin) |
+| โฟลเดอร์รูปถ่าย Drive | เก็บรูปหน้าร้าน/เข้าพบ (`DRIVE_FOLDER_ID`) | aCRM เดิมใช้โฟลเดอร์ของมัน (ดูไฟล์ HANDOFF-ACCOUNTS ใน Drive) | — | ต้องเป็น Shared Drive ถ้า service account อัปโหลด |
+| Google Drive โฟลเดอร์ส่งต่องาน | เอกสารส่งต่อ (ไฟล์ .md) | บัญชีเจ้าของระบบ | โฟลเดอร์ "HAVAN CRM - Handoff (2026-11-27)" ใน Drive (ลิงก์อยู่ในไฟล์ HANDOFF-ACCOUNTS) | แชร์ให้ผู้มาต่อเอง |
+| Preview ชั่วคราว | `wrangler deploy --temporary` ข้อมูลจำลอง | บัญชี Cloudflare ชั่วคราว (หมดอายุ ~1 ชม.) | — | หมดอายุแล้ว สร้างใหม่ได้ |
+
+แผนผัง: **มือถือเซลล์ → Cloudflare Worker `crm` (ไฟล์แอป + /api) → Google Sheets API (ผ่าน service account) → ชีต CRM** ; ล็อกอินด้วย Google ID token → Worker ตรวจอีเมลกับแท็บ `ACCESS` ; รูปถ่าย → Worker → Google Drive API.
+
+## 13. ขั้นตอนเชื่อมต่อละเอียด (ทำตามลำดับ)
+**A. เตรียมเครื่องและโค้ด**
+1. ขอสิทธิ์ write ที่ repo `havancrm-CRM` → `git clone https://github.com/havancrm/havancrm-CRM && cd havancrm-CRM && git checkout claude/ecstatic-cannon-i4gapq`
+2. Node 22 → `npm install` → `npm test` ต้องผ่าน 67 ข้อ
+
+**B. Google Cloud (บัญชี Google ของบริษัท)**
+1. console.cloud.google.com → สร้างโปรเจกต์ใหม่ เช่น `havan-crm`
+2. APIs & Services → Library → เปิดใช้ **Google Sheets API** และ **Google Drive API**
+3. IAM & Admin → Service Accounts → Create service account (เช่น `crm-sheets`) ไม่ต้องกำหนดบทบาทใน project
+4. เข้า service account นั้น → Keys → Add key → Create new key → JSON → ไฟล์นี้คือ **ความลับ** (เก็บในที่ปลอดภัย ห้าม commit/ห้ามส่งแชต) ในไฟล์มี `client_email` และ `private_key`
+5. เปิดชีต CRM → Share → ใส่ `client_email` → สิทธิ์ **Editor** → ส่ง (ไม่ต้องแจ้งอีเมล)
+6. APIs & Services → OAuth consent screen: ตั้งชื่อแอป, อีเมลซัพพอร์ต; ถ้าเป็นสถานะ Testing ต้องเพิ่มอีเมลผู้ใช้ทุกคนเป็น Test user (หรือ Publish)
+7. APIs & Services → Credentials → Create credentials → **OAuth client ID** → Web application → Authorized JavaScript origins ใส่ `https://crm.havan-crm.workers.dev` (และ URL Preview / `http://localhost:8787` ถ้าจะทดสอบ login) → ได้ **Client ID** (ไม่ใช่ความลับ)
+
+**C. รูปถ่าย (ไม่บังคับ)** สร้างโฟลเดอร์ใน **Shared Drive** → เพิ่ม service account เป็นสมาชิก (Content manager) → เอา ID จาก URL โฟลเดอร์ใส่ `DRIVE_FOLDER_ID` (Drive ส่วนตัวใช้ไม่ได้ เพราะ service account ไม่มีโควตา)
+
+**D. Cloudflare (บัญชีที่โฮสต์ ART)**
+1. `npx wrangler login` (หรือสร้าง API token สิทธิ์ Edit Cloudflare Workers แล้วตั้ง `CLOUDFLARE_API_TOKEN`)
+2. dash.cloudflare.com → Workers & Pages → ตรวจว่า workers.dev subdomain คือ `havan-crm` (ART ใช้อยู่แล้ว) — **อย่าเปลี่ยน/อย่าแตะ Worker `acrm`**
+3. แก้ `wrangler.jsonc` → `vars.GOOGLE_CLIENT_ID` (และ `DRIVE_FOLDER_ID` ถ้ามี) ; `SPREADSHEET_ID` ใส่ไว้แล้ว
+4. ตั้ง secrets: `npx wrangler secret put GOOGLE_SA_EMAIL` (วาง `client_email`) และ `npx wrangler secret put GOOGLE_SA_KEY` (วาง `private_key` ทั้งก้อนรวม BEGIN/END; ที่เป็น `\n` วางตามที่เห็นได้ โค้ดแปลงให้)
+
+**E. ทดสอบครั้งแรก (แนะนำให้ทำบนสำเนาชีตก่อน)** เพราะครั้งแรกที่ Worker เขียนชีตจริงยังไม่เคยลอง: ให้เจ้าของระบบ Drive → Make a copy ของชีต CRM → ใส่ ID ของสำเนาเป็น `SPREADSHEET_ID` ใน Preview (`npx wrangler deploy --name crm-preview --var SPREADSHEET_ID:<id สำเนา>`) → แชร์สำเนาให้ service account → ล็อกอิน → ทำเช็คลิสต์ใน `docs/DEPLOY.md` ข้อ 3 → ลบสำเนาทิ้งเมื่อเสร็จ (ต้องได้รับอนุญาตจากเจ้าของระบบก่อน เพราะเป็นการทำสำเนาฐาน)
+
+**F. Deploy จริง** `npm run check` (ต้องผ่านทั้งหมด) → `npx wrangler deploy` (หรือ GitHub Actions → Deploy ต้องตั้ง repo secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) → เปิด `/api/health` เทียบเวอร์ชันกับหน้าตั้งค่า → ซิงก์และบัญชี → ตรวจโครงสร้าง 18 แท็บ
+
+**G. หลัง deploy** ตั้งเตือน: Sheets API โควตา ~300 อ่าน/นาที, Worker Free 100,000 คำขอ/วัน; ถ้าล็อกอินไม่ผ่าน ตรวจ (1) Client ID ตรง (2) origin ตรง (3) อีเมลอยู่ใน ACCESS และ active=TRUE (4) ผู้ใช้เป็น Test user ถ้าแอปยัง Testing
+
+## 14. ใครเก็บอะไร / ความลับ
+- Service account key → เก็บเฉพาะใน `wrangler secret` (และที่เก็บความลับของบริษัท) ห้ามอยู่ใน repo/แชต/Drive สาธารณะ ; `.dev.vars` ถูก git ignore
+- OAuth Client ID ไม่ใช่ความลับ (อยู่ใน `wrangler.jsonc` ได้)
+- สิทธิ์ใช้แอป = แท็บ `ACCESS` ; สิทธิ์ admin = `role` เป็น `admin|owner|manager|แอดมิน|เจ้าของ|ผู้จัดการ`
+- สิทธิ์ที่ผู้มาต่อควรได้: GitHub write (repo ใหม่) + read (repo A) · Editor บนชีต CRM (เฉพาะถ้าต้องดูข้อมูล) · สมาชิก Cloudflare account · เข้า Google Cloud project · เข้าโฟลเดอร์ Drive ส่งต่องาน
+
+## 15. การตัดสินใจของเจ้าของระบบ (ห้ามย้อนโดยไม่ถาม)
+พื้นหลังขาว + ตัวอักษรเล็ก 14.5px + หัวกรมท่าเรียบแบบ ART · ใบส่งสินค้าพิมพ์ช่อง "รหัสสินค้า" ตามต้นแบบ · ปฏิทิน: แบบเดือน = การ์ด 12 เดือนต่อปี, แบบวัน = ตารางวัน · ร้านใหม่ในภาคสนามต้องกันรหัสซ้ำและแยกร้านที่ยังไม่มีรหัสบัญชี · ลูกค้าใหม่แยก "ซื้อครั้งแรก" กับ "เพิ่มทะเบียน" · เกณฑ์รอบซื้อ/ห่างหาย/ขาดเข้าพบต้องอิงค่าเดิมของ aCRM (ที่มี: lateDays 90, dormDays 365, visitDef 30) · ใช้ Cloudflare Free เท่านั้น
