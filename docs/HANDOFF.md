@@ -1,0 +1,82 @@
+# HAVAN CRM — เอกสารส่งต่องาน (Handoff)
+
+อัปเดตล่าสุด: 2026-11-27 · Repo: https://github.com/havancrm/havancrm-CRM · Branch: `claude/ecstatic-cannon-i4gapq` (ยังไม่ merge, ไม่มี PR) · Commit ล่าสุดตอนเขียน: `487a778`
+
+## 1. คืออะไร
+CRM เซลล์ภาคสนาม แทน/คู่กับ aCRM (ART) เดิม — Mobile First, Cloudflare Workers (Free) + **Google Sheets CRM เดิมเป็นฐานเดียว** (Spreadsheet ID `1KbM5G_-O24NfRfiAX9eBcp9KBg_GjGXd7aUCKVdfkHY`, 18 แท็บ/178 คอลัมน์). เป้าหมาย URL: `crm.havan-crm.workers.dev`. **ห้ามแก้ ART / aCRM / repo `havancrm/A`; ห้ามสร้างฐานใหม่; ห้ามล้างข้อมูลจริงเพื่อทดลอง**
+
+## 2. สถานะ ณ ตอนนี้
+- โค้ดครบฟังก์ชันหลักตาม MASTER PROMPT และคำสั่งรอบ 2–3 ทดสอบผ่าน: **หน่วย 67 / ข้อมูลจริง 5 / E2E มือถือ 60**
+- **ยังไม่ได้ deploy จริง** และ **ยังไม่เคยเขียนลงชีตจริงผ่าน Worker** (ไม่มี Cloudflare/Google credential ใน session ที่ทำงาน)
+- Preview ที่เคยทำเป็นบัญชี Cloudflare ชั่วคราว (`wrangler deploy --temporary`, ข้อมูลจำลอง) หมดอายุแล้ว/ใกล้หมด — ไม่ใช่ของจริง
+
+## 3. วิธีรัน/ทดสอบ
+```bash
+npm install
+npm test                         # 67 unit
+npm run dev                      # http://localhost:8787 ข้อมูลจำลอง (ไม่แตะชีตจริง)
+npm run test:e2e                 # 60 ขั้นตอน (ต้องมี playwright+chromium; wrangler dev จะถูกสตาร์ตเอง)
+REAL_DIR=<โฟลเดอร์ส่วนตัว> node --test test/real   # ต้องมี real.json (สำเนาชีต), bills.ttx, customers.ttx, slip-sample.html (ไฟล์ส่วนตัว ไม่อยู่ใน repo)
+npm run stamp                    # ฝังเวอร์ชันเดียวกันใน version.js / sw.js / index.html / server
+```
+Preview ชั่วคราว: `npx wrangler deploy --temporary --var DATA_MODE:memory --var AUTH_MODE:dev --var GOOGLE_CLIENT_ID:` (อายุ ~1 ชม. ต้อง claim; จากเครื่อง sandbox เปิดไม่ได้เพราะ Cloudflare bot challenge — ต้องเปิดจากมือถือ)
+
+## 4. โครงสร้างโค้ด
+```
+public/js/shared/schema.js   18 แท็บ/178 คอลัมน์ — อ่าน-เขียนตามชื่อ Header เท่านั้น (ห้ามใช้ตำแหน่งคอลัมน์)
+public/js/shared/domain.js   ยอดขาย, สถานะลูกค้า, รอบซื้อ, ค้นหา, ทะเบียนสินค้า/รหัสเก่า, ลูกค้าใหม่, เลขออเดอร์, baht text, ตรวจคุณภาพ
+public/js/shared/ops.js     การกระทำ -> mutation แถวชีต (ใช้ทั้ง Worker และแอป/ออฟไลน์), idempotent ด้วย opId
+public/js/ttx.js            ตัวอ่าน TTX จริง (บิล + ลูกค้า) + กติกาแปลง
+public/js/slip.js           ใบส่งสินค้าชั่วคราววาดบนแบบฟอร์ม Havan (public/img/slip-template.png)
+public/js/pages/*.js        home, customers, customer(360), visits(รอบ+ปฏิทิน), orders/order, sales, newcustomers, map, settings(+นำเข้า/คุณภาพ/ป้าย/ซิงก์), forms
+public/js/data.js           ฝั่ง client: auth, แคช IndexedDB, คิวออฟไลน์, ซิงก์
+public/data/units.json      หน่วยนับต่อรหัสสินค้า (366 รหัส; ไม่มีราคา)
+src/server/index.js         Worker: /api/health|me|bootstrap|ops|tab|diagnostics|photo
+src/server/store.js         MemoryStore (preview/ทดสอบ) + SheetsStore (Google Sheets API, JWT service account)
+src/server/exec.js          ตัวรันการเขียน: กันซ้ำ, changes log, สิทธิ์ admin
+src/server/auth.js          Google ID token -> แท็บ ACCESS (active, role=admin)
+test/unit, test/e2e, test/real, test/fixtures   (fixtures = ข้อมูลสังเคราะห์เท่านั้น)
+docs/REPORT.md  docs/DEPLOY.md  docs/HANDOFF.md
+```
+
+## 5. กติกาข้อมูล (ห้ามฝ่าฝืน)
+- ฐานเก็บข้อมูลดิบ คำนวณในแอป. **ยอดขาย = SUM(bill_items.amount)**; **ไม่บวก VAT ซ้ำ**. ห้ามสร้างคอลัมน์ยอดรวม/aliases/product_variants/order_blocks
+- รหัสลูกค้า/สินค้าเป็นข้อความเสมอ (`8217*`, `00123`). ไม่รวมรหัสสินค้าเอง (โหล/ชุด/ลด 4 บาท แยกรหัส)
+- คู่รหัสเก่าที่ผู้ใช้ยืนยัน: 8217→8217*, 8741*→9861, 9833*→9841, 9834*→9837, 9835*→9839 (ใช้เมื่อชื่อไม่ขัดแย้งเท่านั้น). รหัสไม่ตรงทะเบียน ≠ ผิด; ไม่เดารหัสใหม่
+- ป้องกันซ้ำ: ทุกการเขียนมี opId; นำเข้าไฟล์ซ้ำถูกปฏิเสธด้วย fileHash; บิล/บรรทัดซ้ำถูกข้าม; ไม่เขียนทับบิลเดิม
+
+## 6. ข้อเท็จจริงจากข้อมูลจริง (ที่ใช้ตัดสินใจ)
+- จำนวน: ลูกค้า 1,383 / บิล 9,922 / รายการ 30,811 / สินค้า 366 (ตรงเอกสารส่งมอบ). KPI จริง: ปัจจุบัน 549, ห่างหาย 660, เลิกกิจการ 174; ยอดขาย 12,389,283.60 บาท
+- `customers.activeFlag`: ว่าง = ดำเนินกิจการ, `FALSE`/0 = เลิกกิจการ, `TRUE`/1 = ดำเนินกิจการ
+- ค่าเกณฑ์ในแท็บ `systemSettings` (แถว `rules-…`): `lateDays 90`, `dormDays 365`, `visitDef 30`, `comm 8`, `vatRate 7` — **แอปอ่านจากฐาน ไม่ hard-code**. ส่วน `soonDays 7`, `minCycleBills 3`, `newDays 90` และสูตรรอบซื้อ (ค่ากลางระยะห่างวันที่ซื้อ) **ผมตั้งเอง ยังไม่ยืนยันกับ aCRM**
+- รูปแบบแถวที่ aCRM เขียน (แอปใหม่เขียนตามนี้): ออเดอร์ `ร่าง/รอส่ง/ส่งแล้ว/ยกเลิก`, เลขออเดอร์ `NN`+`ddmmyy`(พ.ศ.) เช่น `01261169`, เชื่อมบิลด้วยหมายเหตุ `เชื่อมบิล N`; เข้าพบ = visits `COMPLETED` + activity `เข้าพบ`; นัดหมาย = tasks type `ติดตาม` (dueAt `YYYY-MM-DD 00:00:00`); โน้ต = activity `โน้ต`; แตะโทร/นำทาง = activity `โทร`/`นำทาง`; แก้ข้อมูล = `เปลี่ยนข้อมูลสำคัญ`; ร้านใหม่ = `เพิ่มลูกค้า`; IMPORT_BATCHES (`TTX-BILL-yyyymmdd-nnn`, `TTX cp874`, `sha256:…`), IMPORT_REVIEW (`pending/confirmed`, severity `low/medium`)
+- ชีตตัดค่าว่างท้ายแถว (แถวสั้น) — โค้ดรองรับแล้ว
+
+## 7. TTX จริง (รูปแบบและกติกา)
+ไฟล์เป็นรายงานพิมพ์ cp874, TAB, ฟิลด์มี quote ข้ามบรรทัดได้. **บิล**: แถวหัว (เลขบิล, วัน dd/mm/พ.ศ., รหัสลูกค้า, ชื่อ, "", ยอด) → แถว (โทร/ผู้ติดต่อ, "เงื่อนไข/พนักงาน") → แถวรายการ (รหัส, ชื่อ, จำนวน, ราคา, ยอด). **ลูกค้า**: (ลำดับ, รหัส, ชื่อ, ยอด) + 2 แถวที่อยู่ + "เบอร์ติดต่อ :" + "การชำรเงิน :".
+กติกาแปลง (เทียบกับบิลจริง ~9,900 ใบ): บรรทัด `0015 ภาษีมูลค่าเพิ่ม` ไม่เก็บ + `vatMode=VAT_OUT`; มี `0014 ขอใบกำกับภาษี` = `VAT_IN`; ยอดหัวบิลต่างรายการ → ใช้รายการ + flag `HEADER_NE_ITEMS`; "เงื่อนไข/พนักงาน" → paymentTerm (คำว่า โอน/แนบสำเนา = `โอน`) + openedBy (คำสุดท้ายที่ไม่ใช่คำชำระเงิน), ว่าง = `เงินสด`. ผลกับไฟล์จริง: 9,904 บิล, ตรงฐาน 9,899, ต่างยอด 3, ใหม่ 1; ลูกค้า 1,382 ราย มีครบ. 3 แถวอ่านไม่ได้ (quote เสียในไฟล์ ยอด 0) รายงานเป็น flag ไม่เดา
+เชื่อมออเดอร์กับบิล: ลูกค้าเดียวกัน + ยอดเท่ากัน + บิลไม่เกิน 7 วันหลังออเดอร์ + จับคู่ได้ชัดเดียว (กติกานี้อนุมานจาก 40 ออเดอร์จริง)
+
+## 8. ฟีเจอร์ที่ทำแล้ว (สรุป)
+หน้าแรก (ค้นหา, การ์ด 4 ช่อง, ทางลัด, ป้ายกำกับ 2 คอลัมน์) · ลูกค้า + Customer 360 (4 แท็บ, ปุ่มด่วน 5 ปุ่ม) · ฟอร์มเดียว เข้าพบ/โน้ต/นัดหมาย + GPS + รูป (ไม่บังคับ) · รอบลูกค้า (เลยรอบ/ใกล้ถึง/ขาดเข้าพบ) · **ปฏิทิน: แบบเดือน = การ์ด 12 เดือน/ปี, แบบวัน = ตารางวัน** · รับออเดอร์ (บิลล่าสุด/ย้อนหลัง/สั่งประจำ/ทั้งหมด, ตะกร้าไม่หายเมื่อย้อนกลับ, ร่าง/ยืนยัน) · **ใบส่งสินค้าบนฟอร์ม Havan (พิมพ์รหัสสินค้าเป็นค่าเริ่มต้น — เจ้าของตัดสินใจ)** · **เพิ่มร้านใหม่ในภาคสนาม** (รหัสชั่วคราว `N-yymmdd-XXXX`, กันซ้ำทั้งแอป/เซิร์ฟเวอร์, ผูกรหัสบัญชีแล้วเปลี่ยนรหัสทุกแท็บ) · ลูกค้าใหม่ 2 กลุ่ม (ซื้อครั้งแรก / เพิ่มทะเบียน) · รายงานยอดขาย (ตาราง ไม่มีกราฟ) · แผนที่ · ตั้งค่า (เกณฑ์, ป้ายกำกับ, นำเข้า TTX, คุณภาพข้อมูล, ประวัตินำเข้า, รหัสไม่ตรงทะเบียน + ส่งออก CSV, ซิงก์/ตรวจโครงสร้าง 18 แท็บ) · ออฟไลน์ + คิวซิงก์ · service worker + ระบบเวอร์ชัน
+
+## 9. งานที่ยังค้าง (เรียงตามสำคัญ)
+1. **เทียบกับ aCRM เดิม** — `havancrm/A` เข้าไม่ได้ (ต้องให้สิทธิ์ GitHub App/Claude เข้า repo A หรือส่ง zip). ฟังก์ชันที่เห็นร่องรอยในข้อมูลแต่ **ยังไม่ได้ทำ**: แก้/ลบโน้ต (`แก้บันทึก`, `ลบ`), ช่องเวลาในงานติดตาม, แท็บ "นัดลูกค้า/รอบลูกค้า/หยุดซื้อ" แบบ ART, ข้อมูลรูปเพิ่ม (width/height/bytes), รหัสตรวจ `PRODUCT_NAME_NOT_EXACT_MATCH`/`PRODUCT_NO_DIRECT_BILL_CODE`, กราฟแท่งยอดขาย (สเปกเดิมห้ามกราฟ — ถามเจ้าของ)
+2. **Deploy + ต่อชีตจริง** — ทำตาม `docs/DEPLOY.md`: Google service account (แชร์ชีตเป็น Editor), OAuth Client ID, `wrangler secret put GOOGLE_SA_EMAIL/GOOGLE_SA_KEY`, ตั้ง workers.dev subdomain = `havan-crm`, `GOOGLE_CLIENT_ID`/`DRIVE_FOLDER_ID` ใน `wrangler.jsonc`. ครั้งแรกบน Preview: กด "ตรวจโครงสร้าง 18 แท็บ" แล้วบันทึกโน้ต 1 รายการ ตรวจว่าแถวลงคอลัมน์ถูก
+3. ยืนยันเกณฑ์ `soonDays/minCycleBills/newDays` + สูตรรอบซื้อ กับเจ้าของ/aCRM
+4. รูปถ่าย → Google Drive ต้องใช้ **Shared Drive** (service account ไม่มีโควตา) ยังทดสอบเฉพาะโหมดจำลอง
+5. ทดสอบบนมือถือจริง (GPS/กล้อง/โหลดหน้า) และวัด CPU 10 ms ของ Free plan บน Cloudflare จริง (ออกแบบให้ pass-through ไม่ parse JSON ใน Worker)
+6. เจ้าของกำลังแก้รหัสสินค้า — เสร็จแล้วให้ดูหน้า "ตรวจรหัสที่ไม่ตรงทะเบียน" ใหม่ และอัปเดต `public/data/units.json` ถ้ามีรหัสใหม่
+7. `repo` ชื่อจริง `havancrm/havancrm-CRM` (ในสเปกเขียน `havancrm/CRM`)
+
+## 10. ข้อควรระวัง / บทเรียน
+- **ห้าม commit ข้อมูลจริง** (repo เป็น public): สำเนาชีต, ไฟล์ TTX, ไฟล์ราคา, ใบส่งสินค้าตัวอย่างจริง อยู่นอก repo. fixtures ใน repo เป็นข้อมูลสังเคราะห์
+- ห้ามเขียน/ลบชีตจริงเพื่อทดสอบ. ทดสอบเขียนทำกับ MemoryStore หรือ Google API จำลอง (`test/unit/sheets.test.js`)
+- `AUTH_MODE=dev` ถูกปฏิเสธอัตโนมัติเมื่อ `DATA_MODE=sheets` — ห้ามเอาออก
+- Free plan: ≤50 subrequest/คำขอ → `/api/ops` รับ ≤4 คำสั่ง/ครั้ง; อ่านแท็บ ACCESS ครั้งเดียว/60 วิ
+- ธีม: เจ้าของต้องการ **พื้นหลังขาว, ตัวอักษรเล็ก (14.5px), สีกรมท่าเรียบแบบ ART (ไม่ไล่สีสว่าง/ไม่เข้มทึบ)**; ปฏิทิน/หน้าจอให้เหมือน ART ที่คุ้นเคย
+- เครื่องมือ session: ติดตั้งตัวสร้างอุโมงค์สาธารณะ (cloudflared) ถูกระบบความปลอดภัยปฏิเสธ — อย่าพยายามอีก. ลิงก์ claim ของ Preview ชั่วคราวเป็นความลับ ไม่ใส่ในเอกสาร
+- บั๊กสำคัญที่เคยเจอ (มี regression test แล้ว): `flush()` คิวไม่ส่งงาน, ตัวจัดการคลิกซ้อน, เรนเดอร์ซ้ำล้างข้อความที่พิมพ์
+
+## 11. เอกสารอื่นใน repo
+`docs/REPORT.md` (ผลตรวจรับรอบ 2 ตามข้อ 1–12), `docs/DEPLOY.md` (ขั้นตอน Preview→Production), `README.md`
