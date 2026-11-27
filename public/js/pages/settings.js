@@ -37,7 +37,7 @@ function index({ m }) {
 // ---------------- cycle settings ----------------
 function cycle({ m }) {
   const OLD = 'ค่าเดิมของ aCRM (แถว rules ในแท็บ systemSettings)', NEW = 'ค่าตั้งต้นของ CRM ใหม่ — ไม่มีในฐาน aCRM เดิม ยังไม่ได้ยืนยัน ปรับได้';
-  const f = [['lateDays', 'ลูกค้าห่างหาย เมื่อไม่ซื้อเกิน (วัน)', `ปัจจุบัน = ซื้อภายในกี่วัน · ${OLD}`], ['dormDays', 'ถือว่าหลับยาว เมื่อไม่ซื้อเกิน (วัน)', OLD], ['visitDef', 'ควรเข้าพบทุก (วัน)', `ใช้คำนวณ “ขาดเข้าพบ” · ${OLD}`], ['soonDays', 'แจ้ง “ใกล้ถึงรอบซื้อ” ล่วงหน้า (วัน)', NEW], ['minCycleBills', 'จำนวนวันที่ซื้ออย่างน้อยก่อนคำนวณรอบ', `น้อยกว่านี้จะไม่เดารอบ · ${NEW}`], ['newDays', 'ลูกค้าใหม่ = ภายใน (วัน)', NEW]];
+  const f = [['dormDays', 'ลูกค้าห่างหาย เมื่อไม่ซื้อเกิน (วัน)', `ปัจจุบัน = ซื้อภายในกี่วัน · ${OLD}`], ['lateDays', 'เกินรอบนาน เมื่อเลยรอบเกิน (วัน)', OLD], ['visitDef', 'รอบเข้าพบ = บิลล่าสุด + (วัน)', `ค่ามาตรฐานของ aCRM · ${OLD}`], ['nearDays', 'แจ้ง “ใกล้ถึงรอบ” ล่วงหน้า (วัน)', OLD], ['newDays', 'ลูกค้าใหม่ = ภายใน (วัน)', NEW]];
   return {
     title: 'รอบซื้อ / ลูกค้าห่างหาย',
     html: `<div class="stack">${adminOnly()}${f.map(([k, t, h]) => `<label class="field"><span>${t}</span><input class="inp" inputmode="numeric" data-k="${k}" value="${esc(m.settings[k])}">${h ? `<span class="xs faint" style="margin-top:3px">${h}</span>` : ''}</label>`).join('')}

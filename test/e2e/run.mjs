@@ -66,7 +66,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   const CID = custCurrent.id;
 
   console.log('\n== Boot / auth / version ==');
-  await step('app boots and renders home without console errors', async () => { await page.goto(BASE + '/'); await page.waitForSelector('.mini4', { timeout: 15000 }); ok(consoleErrors.length === 0, consoleErrors.join(' | ')); await shot('01-home'); });
+  await step('app boots and renders home without console errors', async () => { await page.goto(BASE + '/'); await page.waitForSelector('.hstat', { timeout: 15000 }); ok(consoleErrors.length === 0, consoleErrors.join(' | ')); await shot('01-home'); });
   await step('version identical in app, service worker and server', async () => {
     const v = await page.evaluate(() => window.__crm.VERSION);
     const sw = await (await fetch(BASE + '/sw.js')).text(); const h = (await (await fetch(BASE + '/api/health')).json()).version;
@@ -80,25 +80,25 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   await step('unauthorised account sees the login wall, not data', async () => {
     const c2 = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p2 = await c2.newPage(); await p2.addInitScript(() => localStorage.setItem('devUser', 'off@local'));
     await p2.goto(BASE + '/'); await p2.waitForSelector('#login:not(.hide)', { timeout: 8000 });
-    ok((await p2.locator('#login').innerText()).includes('ไม่มีสิทธิ์'), 'no denial message'); ok(!(await p2.locator('.mini4').count()), 'data visible'); await c2.close();
+    ok((await p2.locator('#login').innerText()).includes('ไม่มีสิทธิ์'), 'no denial message'); ok(!(await p2.locator('.hstat').count()), 'data visible'); await c2.close();
   });
 
   console.log('\n== Home KPIs tie to the data ==');
   await step('4 customer cards, one row, numbers = database', async () => {
     await go('#/'); const k = D.customerCounts(M0);
-    const nums = await page.locator('.mini b').allInnerTexts(); ok(nums.join() === [k.all, k.current, k.lapsed, k.closed].join(), `cards ${nums} != ${[k.all, k.current, k.lapsed, k.closed]}`);
-    const ys = await page.locator('.mini').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top))); ok(new Set(ys).size === 1, 'cards not on one row');
-    const [, , , c4] = await page.locator('.mini').evaluateAll(els => els.map(e => e.getBoundingClientRect().width)); ok(c4 < 100, 'cards not compact');
+    const nums = await page.locator('.hstat b').allInnerTexts(); ok(nums.join() === [k.all, k.current, k.lapsed, k.closed].join(), `cards ${nums} != ${[k.all, k.current, k.lapsed, k.closed]}`);
+    const ys = await page.locator('.hstat a').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top))); ok(new Set(ys).size === 1, 'cards not on one row');
+    const [, , , c4] = await page.locator('.hstat a').evaluateAll(els => els.map(e => e.getBoundingClientRect().width)); ok(c4 < 100, 'cards not compact');
   });
   await step('every KPI card opens the matching list with the same count', async () => {
     for (const [i, key] of ['all', 'current', 'lapsed', 'closed'].entries()) {
-      await go('#/'); await page.locator('.mini').nth(i).click(); await page.waitForSelector('#cnt'); await sleep(200);
+      await go('#/'); await page.locator('.hstat a').nth(i).click(); await page.waitForSelector('#cnt'); await sleep(200);
       const t = await page.locator('#cnt').innerText(); const exp = D.customerCounts(M0)[key]; ok(t.startsWith(String(exp)), `${key}: ${t} != ${exp}`);
     }
   });
   await step('labels are 2 columns, counts from customer_labels, tap filters customers', async () => {
-    await go('#/'); const cols = await page.locator('.lbls').evaluate(e => getComputedStyle(e).gridTemplateColumns.split(' ').length); ok(cols === 2, 'labels grid cols ' + cols);
-    const first = page.locator('.lbl').first(); const name = await first.locator('span').first().innerText(); const n = +(await first.locator('b').innerText());
+    await go('#/'); const cols = await page.locator('.lg').evaluate(e => getComputedStyle(e).gridTemplateColumns.split(' ').length); ok(cols === 2, 'labels grid cols ' + cols);
+    const first = page.locator('.hlr').first(); const name = await first.locator('span').first().innerText(); const n = +(await first.locator('b').innerText());
     const exp = M0.raw.customer_labels.filter(l => l.label === name).length; ok(n === exp, `label count ${n} != ${exp}`);
     await first.click(); await page.waitForSelector('#cnt'); await sleep(200); const t = await page.locator('#cnt').innerText();
     const expC = M0.customers.filter(c => D.custLabels(M0, c.id).includes(name)).length; ok(t.startsWith(String(expC)), `${t} != ${expC}`);
@@ -112,7 +112,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   });
 
   console.log('\n== Bottom navigation, back, every page ==');
-  const PAGES = [['#/', 'หน้าแรก'], ['#/customers', 'ลูกค้า'], ['#/visits', 'เข้าพบ'], ['#/orders', 'ออเดอร์'], ['#/settings', 'ตั้งค่า'], ['#/sales', 'รายงานยอดขาย'], ['#/new', 'ลูกค้าใหม่'], ['#/map', 'แผนที่'], ['#/visits?tab=cal', 'ปฏิทิน'], ['#/settings/cycle', 'รอบซื้อ'], ['#/settings/labels', 'ป้ายกำกับ'], ['#/settings/quality', 'ตรวจคุณภาพ'], ['#/settings/codes', 'ไม่ตรงทะเบียน'], ['#/settings/imports', 'ประวัติการนำเข้า'], ['#/settings/import', 'นำเข้า TTX'], ['#/settings/sync', 'ซิงก์'], [`#/c/${CID}`, 'ภาพรวม'], [`#/c/${CID}?tab=info`, 'ข้อมูลลูกค้า'], [`#/c/${CID}?tab=history`, 'บิล'], [`#/c/${CID}?tab=visits`, 'บันทึกเข้าพบ'], [`#/order/new?c=${CID}`, 'บิลล่าสุด']];
+  const PAGES = [['#/', 'ยอดขายเดือนนี้'], ['#/customers', 'ลูกค้า'], ['#/visits', 'เข้าพบ'], ['#/orders', 'ออเดอร์'], ['#/settings', 'ตั้งค่า'], ['#/sales', 'รายงานยอดขาย'], ['#/new', 'ลูกค้าใหม่'], ['#/map', 'แผนที่'], ['#/follow', 'แสดงแบบเดือน'], ['#/settings/cycle', 'ห่างหาย'], ['#/settings/labels', 'ป้ายกำกับ'], ['#/settings/quality', 'ตรวจคุณภาพ'], ['#/settings/codes', 'ไม่ตรงทะเบียน'], ['#/settings/imports', 'ประวัติการนำเข้า'], ['#/settings/import', 'นำเข้า TTX'], ['#/settings/sync', 'ซิงก์'], [`#/c/${CID}`, 'ภาพรวม'], [`#/c/${CID}?tab=info`, 'ข้อมูลลูกค้า'], [`#/c/${CID}?tab=history`, 'บิล'], [`#/c/${CID}?tab=visits`, 'บันทึกเข้าพบ'], [`#/order/new?c=${CID}`, 'บิลล่าสุด']];
   await step(`all ${PAGES.length} pages render without error, overflow or console errors (mobile 390px)`, async () => {
     for (const [h, txt] of PAGES) {
       await go(h); await sleep(150);
@@ -123,7 +123,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     ok(consoleErrors.length === 0, 'console errors: ' + consoleErrors.join(' | '));
   });
   await step('bottom nav has exactly 5 items in order and each opens its page', async () => {
-    await go('#/'); const labels = await page.locator('#nav a').allInnerTexts(); ok(labels.map(s => s.trim()).join() === 'หน้าแรก,ลูกค้า,เข้าพบ,ออเดอร์,ตั้งค่า', labels.join());
+    await go('#/'); const labels = await page.locator('#nav a').allInnerTexts(); ok(labels.map(s => s.trim()).join() === 'หน้าหลัก,ลูกค้า,เข้าพบ,ออเดอร์,ตั้งค่า', labels.join());
     for (const [i, h] of ['#/', '#/customers', '#/visits', '#/orders', '#/settings'].entries()) { await page.locator('#nav a').nth(i).click(); await sleep(250); ok(page.url().endsWith(h) || page.url().includes(h + '?'), `nav ${i} -> ${page.url()}`); ok((await page.locator('#nav a.on').count()) === 1, 'active tab'); }
   });
   await step('back button returns through history and keeps bottom nav', async () => {
@@ -138,9 +138,10 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
 
   console.log('\n== Customer 360 ==');
   await step('4 tabs; 5 quick buttons in one row in the specified order', async () => {
-    await go(`#/c/${CID}`); const tabs = (await page.locator('.tabs button').allInnerTexts()).join(); ok(tabs === 'ภาพรวม,ข้อมูล,ประวัติซื้อ,เข้าพบ', tabs);
-    const q = await page.locator('.quick > *').evaluateAll(els => els.map(e => ({ t: e.innerText.trim(), y: Math.round(e.getBoundingClientRect().top) })));
-    ok(q.map(x => x.t).join() === 'บันทึก,รูป+พิกัด,รับออเดอร์,โทร,นำทาง', q.map(x => x.t).join()); ok(new Set(q.map(x => x.y)).size === 1, 'quick buttons wrap');
+    await go(`#/c/${CID}`); const tabs = (await page.locator('.tabs button').allInnerTexts()).join(); ok(tabs === 'ภาพรวม,ข้อมูล,ประวัติซื้อ,บันทึก', tabs);
+    const q = await page.locator('.act > *').evaluateAll(els => els.map(e => ({ t: e.innerText.trim(), y: Math.round(e.getBoundingClientRect().top) })));
+    ok(q.map(x => x.t).join() === 'เข้าพบ / บันทึก,รูป+พิกัด,ออเดอร์', q.map(x => x.t).join()); ok(new Set(q.map(x => x.y)).size === 1, 'foot buttons wrap');
+    const h = await page.locator('.quick > *').allInnerTexts(); ok(h.map(x => x.trim()).join() === 'โทร,นำทาง', h.join());
     await shot('customer-360');
   });
   await step('overview shows last bill, regular items, pre-visit note, birthday, store photo and GPS status', async () => {
@@ -188,7 +189,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     await page.fill('#vn', APPT); await page.fill('#vd', apptDay); await page.click('#vs');
     const r = await until(async () => { const x = await raw(); return x.tasks.find(t => t.note === APPT) && x; }); const t = r.tasks.find(t => t.note === APPT);
     ok(t.type === 'ติดตาม' && t.status === 'open' && t.dueAt === apptDay + ' 00:00:00' && t.owner === 'dev@local', JSON.stringify(t)); ok(r.activities.some(a => a.type === 'ติดตาม' && a.refId === t.taskId), 'activity');
-    await go(`#/visits?tab=cal&v=day&ym=${apptDay.slice(0, 7)}&d=${apptDay}`); await sleep(300);
+    await go(`#/follow?v=day&ym=${apptDay.slice(0, 7)}&d=${apptDay}`); await sleep(300);
     const cell = await page.locator(`[data-d="${apptDay}"] b`).innerText(); ok(+cell >= 1, 'calendar count ' + cell); ok((await view().innerText()).includes(M0.custById.get(CID).name), 'customer under date');
   });
   await step('calendar: tap a day lists stores below on the same page; month navigation works', async () => {
@@ -196,7 +197,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     await page.locator('[data-m="-1"]').click(); await sleep(250); await page.locator(`[data-d="${apptDay}"]`).click(); await sleep(200); ok((await view().innerText()).includes('ร้าน'), 'list');
   });
   await step('calendar MONTH view = 12 month cards per year (count each), tap month lists stores; DAY view = day grid; choice remembered', async () => {
-    await go(`#/visits?tab=cal&v=month&ym=${apptDay.slice(0, 7)}`); await sleep(300);
+    await go(`#/follow?v=month&ym=${apptDay.slice(0, 7)}`); await sleep(300);
     ok(await page.locator('.mcard').count() === 12 && await page.locator('.cal').count() === 0, 'month cards');
     const m2 = D.buildModel(await raw(), Date.now()); const ym = apptDay.slice(0, 7); const exp = [...D.monthCalendar(m2, ym).values()].reduce((s, a) => s + a.length, 0);
     const shown = +(await page.locator(`.mcard.sel b`).innerText()); ok(shown === exp && exp >= 1, `month count ${shown} vs ${exp}`);
@@ -204,7 +205,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     await page.locator('.mcard').nth(0).click(); await sleep(200); ok((await page.locator('.mcard.sel span').innerText()).includes('ม.ค.'), 'month tap');
     const y0 = await page.locator('[data-y].on').innerText(); await page.locator('[data-y]').last().click(); await sleep(200); ok((await page.locator('[data-y].on').innerText()) !== y0, 'year switch');
     await page.locator('[data-vm="day"]').click(); await sleep(300); ok(await page.locator('.cal').count() === 1 && await page.locator('.mcard').count() === 0, 'day grid'); await shot('calendar-day');
-    await go('#/visits?tab=cal'); ok(await page.locator('.cal').count() === 1, 'mode not remembered');
+    await go('#/follow'); ok(await page.locator('.cal').count() === 1, 'mode not remembered');
     await page.locator('[data-vm="month"]').click(); await sleep(200); ok(await page.locator('.mcard').count() === 12, 'back to cards');
   });
   await step('completing the follow-up task closes it and adds an activity', async () => {
@@ -212,9 +213,16 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     const r = await until(async () => { const x = await raw(); return x.tasks.find(t => t.note?.includes(APPT) && t.status === 'done') && x; }); ok(r, 'task not done');
     ok(r.tasks.find(t => t.note?.includes(APPT)).completedAt, 'completedAt');
   });
-  await step('cycle page: overdue / soon / missed groups equal the computed lists', async () => {
-    await go('#/visits?tab=cycle'); const s = D.suggestions(D.buildModel(await raw(), Date.now()));
-    for (const [k, t] of [['overdue', 'เลยรอบซื้อ'], ['soon', 'ใกล้ถึงรอบซื้อ'], ['missed', 'ขาดเข้าพบ']]) { const txt = await page.locator(`[data-g="${k}"]`).innerText(); ok(txt.includes(`${t} ${s[k].length}`) || txt.includes(String(s[k].length)), `${k}: ${txt} vs ${s[k].length}`); }
+  await step('รอบลูกค้า page (aCRM): bell badge on home = today+over+late; month cards use due date = last bill + 30; list + overdue + no-cycle links', async () => {
+    const m3 = D.buildModel(await raw(), Date.now()); const s = D.suggestions(m3); const exp = s.today.length + s.over.length + s.late.length;
+    await go('#/'); const badge = await page.locator('.hacts .bdg').innerText().catch(() => '0'); ok(badge === (exp > 99 ? '99+' : String(exp)) || exp === 0, `badge ${badge} vs ${exp}`);
+    await go('#/follow?v=month'); await sleep(300); ok(await page.locator('.mcard').count() === 12, '12 month cards');
+    const txt = await view().innerText(); ok(txt.includes('เกินรอบจากเดือนก่อน') && txt.includes('ยังไม่มีรอบ'), 'extra links');
+    await go('#/follow?ov=1'); ok((await page.locator('.cr').count()) === Math.min(50, D.overdueBefore(m3, m3.today.slice(0, 7) + '-01').length), 'overdue list count');
+  });
+  await step('เข้าพบ page (check-in): chips ถึงรอบ / ใน 5 กม. / ทั้งหมด, search box, list', async () => {
+    await go('#/visits'); ok((await page.locator('#ch .chip').allInnerTexts()).length === 3, 'chips'); ok(await page.locator('#q').count() === 1, 'search');
+    await page.locator('#ch .chip').nth(2).click(); await sleep(200); ok(await page.locator('#list .cr').count() > 0, 'list');
   });
   await step('store GPS update: writes customers.gpsLat/gpsLng/mapLink + gps row + changes log', async () => {
     const c = M0.customers.find(c => !D.hasGps(c) && D.customerStats(M0, c.id).status !== 'closed'); await go(`#/c/${c.id}`); await page.locator('[data-act="geo"]').click(); await page.waitForSelector('.sheet #gb'); await page.click('#gb');
@@ -294,8 +302,8 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   });
   await step('sales drill-down: by month/clerk/customer/bills all tappable lists', async () => {
     await go('#/sales?p=all&v=bills'); await page.waitForSelector('[data-bill]'); await page.locator('[data-bill]').first().click(); await page.waitForSelector('.sheet'); await page.locator('.sheet [data-close]').first().click();
-    for (const v of ['month', 'clerk', 'cust']) { await go(`#/sales?p=all&v=${v}`); ok((await page.locator('#sl .li').count()) > 0, v); }
-    await go('#/sales?p=all&v=month'); await page.locator('#sl .li').first().click(); await sleep(400); ok((await view().innerText()).includes('บิล'), 'month drilldown');
+    for (const v of ['month', 'clerk', 'cust']) { await go(`#/sales?p=all&v=${v}`); ok((await page.locator('#sl .cr, #sl .li').count()) > 0, v); }
+    await go('#/sales?p=all&v=month'); await page.locator('#sl .cr, #sl .li').first().click(); await sleep(400); ok((await view().innerText()).includes('บิล'), 'month drilldown');
   });
   await step('new-customers page has two separate groups: first purchase vs newly registered, counts equal computed', async () => {
     const m2 = D.buildModel(await raw(), Date.now()); const first = m2.customers.filter(c => D.isFirstPurchaseNew(m2, c)).length, reg = m2.customers.filter(c => D.isRecentlyRegistered(m2, c)).length;
@@ -308,7 +316,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   });
 
   await step('every list page has a search box (customers, orders, cycle, calendar day, sales views, new, map, labels, codes, history, imports)', async () => {
-    const list = ['#/customers', '#/orders', '#/visits?tab=cycle', '#/sales?p=all&v=month', '#/sales?p=all&v=clerk', '#/sales?p=all&v=cust', '#/sales?p=all&v=bills', '#/new', '#/map', '#/settings/labels', '#/settings/codes', '#/settings/imports', `#/c/${CID}?tab=history`];
+    const list = ['#/customers', '#/orders', '#/follow', '#/sales?p=all&v=month', '#/sales?p=all&v=clerk', '#/sales?p=all&v=cust', '#/sales?p=all&v=bills', '#/new', '#/map', '#/settings/labels', '#/settings/codes', '#/settings/imports', `#/c/${CID}?tab=history`];
     for (const h of list) { await go(h); await sleep(200); ok((await page.locator('#view input[type="search"]').count()) >= 1, `no search box on ${h}`); }
   });
   await step('sales numbers are tappable (bill count -> bills, customers -> customers); clerk view lists clerks AND salespeople', async () => {
@@ -319,10 +327,10 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
 
   console.log('\n== Settings, data quality, import ==');
   await step('cycle settings persist to systemSettings (new row), keep comm/vatRate; home counts react', async () => {
-    await go('#/settings/cycle'); await page.fill('[data-k="lateDays"]', '30'); await page.click('#sv'); const r = await until(async () => { const x = await raw(); return x.systemSettings.length >= 2 && x; });
-    const latest = r.systemSettings.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b)); const d = JSON.parse(latest.data); ok(d.lateDays === 30 && d.comm === 8 && d.vatRate === 7, latest.data);
-    await go('#/'); await sleep(300); const m2 = D.buildModel(r, Date.now()); const nums = await page.locator('.mini b').allInnerTexts(); ok(nums[1] === String(D.customerCounts(m2).current), `current ${nums[1]} vs ${D.customerCounts(m2).current}`);
-    await go('#/settings/cycle'); await page.fill('[data-k="lateDays"]', '90'); await page.click('#sv'); await sleep(500);
+    await go('#/settings/cycle'); await page.fill('[data-k="dormDays"]', '30'); await page.click('#sv'); const r = await until(async () => { const x = await raw(); return x.systemSettings.length >= 2 && x; });
+    const latest = r.systemSettings.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b)); const d = JSON.parse(latest.data); ok(d.dormDays === 30 && d.comm === 8 && d.vatRate === 7, latest.data);
+    await go('#/'); await sleep(300); const m2 = D.buildModel(r, Date.now()); const nums = await page.locator('.hstat b').allInnerTexts(); ok(nums[1] === String(D.customerCounts(m2).current), `current ${nums[1]} vs ${D.customerCounts(m2).current}`);
+    await go('#/settings/cycle'); await page.fill('[data-k="dormDays"]', '365'); await page.click('#sv'); await sleep(500);
   });
   await step('non-admin cannot save settings or import (UI disabled + server forbids)', async () => {
     const f = await api('/api/ops', { method: 'POST', user: 'sales@local', body: JSON.stringify({ ops: [{ type: 'settings.save', opId: 'na-' + Date.now(), payload: { data: { lateDays: 1 } } }] }) }); ok(f.body.results[0].code === 'forbidden', JSON.stringify(f.body));
@@ -405,13 +413,13 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   await step('offline: field note is queued locally, shown in header, then synced exactly once when back online', async () => {
     const N = 'e2e-offline-' + Date.now(); await go(`#/c/${CID}`); await ctx.setOffline(true); await page.evaluate(() => window.dispatchEvent(new Event('offline')));
     await page.locator('[data-act="note"]').click(); await page.waitForSelector('.sheet #vk'); await page.locator('#vk [data-k="note"]').click(); await page.fill('#vn', N); await page.click('#vs'); await sleep(600);
-    ok((await page.locator('#hdr .sync').innerText()).includes('ออฟไลน์') || (await page.locator('#hdr .sync').innerText()).includes('รอส่ง'), 'header state'); ok((await raw()).activities.filter(v => v.note === N).length === 0, 'reached server while offline');
+    ok((await page.locator('#hdr .st').innerText()).includes('ออฟไลน์') || (await page.locator('#hdr .st').innerText()).includes('รอส่ง'), 'header state'); ok((await raw()).activities.filter(v => v.note === N).length === 0, 'reached server while offline');
     await go(`#/c/${CID}?tab=visits`).catch(() => {}); ok((await view().innerText()).includes(N), 'optimistic row missing');
     await ctx.setOffline(false); await page.evaluate(() => window.dispatchEvent(new Event('online'))); const v = await until(async () => { const x = (await raw()).activities.filter(v => v.note === N); return x.length && x; }, 10000); ok(v.length === 1, 'rows ' + v.length);
     await sleep(1200); ok((await raw()).activities.filter(v => v.note === N).length === 1, 'duplicated after sync');
   });
   await step('app shell loads offline from cache (service worker)', async () => {
-    await page.goto(BASE + '/'); await page.waitForSelector('.mini4'); await sleep(800); await ctx.setOffline(true); await page.reload(); await page.waitForSelector('.mini4', { timeout: 10000 }); ok((await page.locator('.mini b').first().innerText()) !== '', 'no cached data'); await ctx.setOffline(false);
+    await page.goto(BASE + '/'); await page.waitForSelector('.hstat'); await sleep(800); await ctx.setOffline(true); await page.reload(); await page.waitForSelector('.hstat', { timeout: 10000 }); ok((await page.locator('.hstat b').first().innerText()) !== '', 'no cached data'); await ctx.setOffline(false);
   });
   await step('queue persists across reload before it is flushed (IndexedDB)', async () => {
     const N = 'e2e-persist-' + Date.now(); await go(`#/c/${CID}`); await ctx.setOffline(true); await page.evaluate(() => window.dispatchEvent(new Event('offline')));

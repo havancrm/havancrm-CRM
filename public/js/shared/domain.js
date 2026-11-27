@@ -4,10 +4,11 @@
 import { rowsToObjects } from './schema.js';
 
 export const DEFAULT_SETTINGS = {
-  comm: 8, visitDef: 30, dormDays: 365, lateDays: 90, vatRate: 7,
-  soonDays: 7,        // "ใกล้ถึงรอบซื้อ" window
-  minCycleBills: 3,   // purchase dates needed before a cycle is trusted
-  newDays: 90,        // "ลูกค้าใหม่": first purchase within N days
+  // Same rules as aCRM (v77 source): visitDef = default customer round (days since last bill),
+  // dormDays = no purchase for longer than this => "หยุดซื้อนาน / ห่างหาย", lateDays = overdue for longer than this => "เกินรอบนาน",
+  // nearDays = "ใกล้ถึงรอบ" window. aCRM does NOT derive a buying cycle from history (stores order irregularly).
+  comm: 8, visitDef: 30, dormDays: 365, lateDays: 90, nearDays: 7, vatRate: 7,
+  newDays: 90,        // CRM-only: "ลูกค้าใหม่" window (first purchase / newly registered within N days)
 };
 
 // Pairs confirmed by the user (old code -> current code). Used ONLY to link history for
@@ -145,6 +146,23 @@ export function visitDone(v) {
 export const visitPlanned = v => String(v.status || '').toLowerCase() === 'planned';
 
 // ---------- per-customer stats ----------
+export const CYC = {
+  ACT: { lbl: 'ปัจจุบัน', cls: 'p-grn', rank: 3 },
+  DORM: { lbl: 'หยุดซื้อนาน', cls: 'p-gry', rank: 4 },
+  NONE: { lbl: 'ยังไม่เคยซื้อ', cls: 'p-gry', rank: 5 },
+  CLOSED: { lbl: 'เลิกกิจการ', cls: 'p-gry', rank: 9 },
+};
+const maxStr = (...a) => a.filter(Boolean).sort().pop() || '';
+function lastOrderDate(m, id) {
+  if (!m._ordIdx) { m._ordIdx = new Map(); for (const o of m.orders || []) { if (o.status === 'ยกเลิก' || !o.date) continue; const d = dateOf(o.date), cur = m._ordIdx.get(o.customerId); if (!cur || d > cur) m._ordIdx.set(o.customerId, d); } }
+  return m._ordIdx.get(id) || '';
+}
+function postponedTo(m, id, base) {              // aCRM activity "เลื่อนรอบ" {pp: new due, pb: base it applies to}
+  let best = null;
+  for (const a of m.activitiesByCust.get(id) || []) if (a.type === 'เลื่อนรอบ') { const d = parseJson(a.data, {}); if (d.pb === base && d.pp && (!best || String(a.at) > String(best.at))) best = { at: a.at, pp: d.pp }; }
+  return best ? best.pp : '';
+}
+
 export function customerStats(m, id) {
   if (m._stats.has(id)) return m._stats.get(id);
   const c = m.custById.get(id);
@@ -157,46 +175,44 @@ export function customerStats(m, id) {
   let total = 0;
   for (const b of bills) total += billTotal(m, b.no);
 
-  // cycle = median gap between distinct purchase dates, only when enough history exists
-  let cycle = null;
-  if (dates.length >= s.minCycleBills) {
-    const gaps = [];
-    for (let i = 1; i < dates.length; i++) gaps.push(dayNum(dates[i]) - dayNum(dates[i - 1]));
-    const med = median(gaps);
-    if (Number.isFinite(med) && med > 0) cycle = Math.max(1, Math.round(med));
-  }
-  const dueDay = cycle && last ? dayNum(last) + cycle : null;
-  let cycleState = 'none';
-  if (dueDay !== null) {
-    if (today > dueDay) cycleState = 'overdue';
-    else if (dueDay - today <= s.soonDays) cycleState = 'soon';
-    else cycleState = 'ok';
-  }
-
   // last visit = latest completed visit row OR activity "เข้าพบ" (aCRM logs both)
   let lastVisit = '';
   for (const v of (m.visitsByCust.get(id) || []).filter(visitDone)) { const d = dateOf(v.completedAt || v.at); if (d > lastVisit) lastVisit = d; }
   for (const a of m.activitiesByCust.get(id) || []) if (a.type === 'เข้าพบ') { const d = dateOf(a.at); if (d > lastVisit) lastVisit = d; }
   const daysSinceVisit = lastVisit ? today - dayNum(lastVisit) : null;
-  const visitDue = daysSinceVisit === null || daysSinceVisit > s.visitDef;
 
-  let status;
-  if (c && isClosedFlag(c.activeFlag)) status = 'closed';
-  else if (!last) status = 'lapsed';           // never bought -> not a current customer
-  else if (daysSince <= s.lateDays) status = 'current';
-  else status = 'lapsed';
+  // aCRM purchase state: no bill = NONE; last purchase older than dormDays = DORM; else ACT
+  const closed = !!c && isClosedFlag(c.activeFlag);
+  const st = !last ? 'NONE' : daysSince > s.dormDays ? 'DORM' : 'ACT';
+  const status = closed ? 'closed' : st === 'ACT' ? 'current' : 'lapsed';
 
+  // customer round (the ONE place that computes the due date): last bill date (or, with no bill, last visit/order) + visitDef days.
+  // Shops with no contact at all, or none for longer than dormDays, have no round.
+  const lastOrd = lastOrderDate(m, id);
+  const lastContact = maxStr(lastVisit, last, lastOrd), base = last || maxStr(lastVisit, lastOrd);
+  let vd;
+  if (!lastContact || today - dayNum(lastContact) > s.dormDays) vd = { none: true, base: '', due: '9999-12-31', cycle: s.visitDef, postponed: false };
+  else { const pp = postponedTo(m, id, base); vd = { none: false, base, due: pp || dayStr(dayNum(base) + s.visitDef), cycle: s.visitDef, postponed: !!pp }; }
+  const dueDay = vd.none ? null : dayNum(vd.due);
+  const eligible = !closed && !vd.none;
+
+  const k = closed ? CYC.CLOSED : CYC[st];
   const res = {
     id, bills: bills.length, total, firstDate: dates[0] || '', lastDate: last, daysSince,
-    cycle, dueDay, dueDate: dueDay !== null ? dayStr(dueDay) : '', cycleState,
-    lastVisit, daysSinceVisit, visitDue, status, neverBought: !last,
-    dormant: !!last && daysSince > s.dormDays,
+    st, lbl: k.lbl, cls: k.cls, rank: k.rank, status, neverBought: !last, dormant: st === 'DORM',
+    lastVisit, daysSinceVisit, vd, eligible, dueDate: vd.none ? '' : vd.due, dueDay,
+    dueDiff: eligible ? dueDay - today : null,           // <0 overdue, 0 today, >0 days left
   };
   m._stats.set(id, res);
   return res;
 }
+export function visitLabel(m, st) {
+  if (!st.eligible) return 'ยังไม่มีรอบ';
+  const d = st.dueDiff;
+  return d < 0 ? `เกินรอบ ${-d} วัน` : d === 0 ? 'ถึงรอบวันนี้' : `ถึงรอบ ${dateOf(st.dueDate).slice(8, 10)}/${dateOf(st.dueDate).slice(5, 7)}`;
+}
 
-export const STATUS_TH = { current: 'ปัจจุบัน', lapsed: 'ห่างหาย', closed: 'เลิกกิจการ' };
+export const STATUS_TH = { current: 'ปัจจุบัน', lapsed: 'ห่างหาย', closed: 'เลิกกิจการ' };   // KPI cards (ห่างหาย = หยุดซื้อนาน + ยังไม่เคยซื้อ)
 
 export function customerCounts(m) {
   const k = { all: 0, current: 0, lapsed: 0, closed: 0 };
@@ -433,22 +449,46 @@ export function smartSearch(m, q) {
 }
 
 // ---------- visit planning / suggestions ----------
+// Customer-round groups exactly as aCRM homeGroups(): today / over / late / near / nocyc (+ open follow-up tasks).
 export function suggestions(m) {
-  const overdue = [], soon = [], missed = [];
+  const g = { today: [], over: [], late: [], near: [], nocyc: [], tasks: [] };
+  const todayN = dayNum(m.today);
+  const tk = new Map();
+  for (const t of m.raw.tasks || []) if (String(t.status || '').toLowerCase() === 'open' && t.dueAt && dateOf(t.dueAt) < m.today) { if (!tk.has(t.customerId)) tk.set(t.customerId, []); tk.get(t.customerId).push(t); }
   for (const c of m.customers) {
     const st = customerStats(m, c.id);
     if (st.status === 'closed') continue;
-    if (st.cycleState === 'overdue' && st.status !== 'lapsed') overdue.push({ c, st, days: m.today && dayNum(m.today) - st.dueDay });
-    else if (st.cycleState === 'soon') soon.push({ c, st, days: st.dueDay - dayNum(m.today) });
-    if (st.status === 'current' && st.visitDue) missed.push({ c, st });
+    const e = { c, st, days: Math.abs(st.dueDiff ?? 0) };
+    if (!st.eligible) g.nocyc.push(e);
+    else if (st.dueDiff === 0) g.today.push(e);
+    else if (st.dueDiff < 0) (-st.dueDiff > m.settings.lateDays ? g.late : g.over).push(e);
+    else if (st.dueDiff <= m.settings.nearDays) g.near.push(e);
+    if (tk.has(c.id)) g.tasks.push({ c, st, tasks: tk.get(c.id) });
   }
-  overdue.sort((a, b) => b.days - a.days);
-  soon.sort((a, b) => a.days - b.days);
-  missed.sort((a, b) => (b.st.daysSinceVisit ?? 9999) - (a.st.daysSinceVisit ?? 9999));
-  return { overdue, soon, missed };
+  const byDue = (a, b) => (a.st.dueDate < b.st.dueDate ? -1 : a.st.dueDate > b.st.dueDate ? 1 : 0);
+  for (const k of ['today', 'over', 'late', 'near']) g[k].sort(byDue);
+  void todayN;
+  return g;
 }
 
-// Calendar for a month: day -> [{c, reason}]. Reasons: 'นัดหมาย' (recorded by sales), 'ถึงรอบซื้อ' (computed).
+// Shops grouped by the month their round falls due (aCRM "รอบลูกค้า" month grid). ym = 'YYYY-MM'
+export function dueByMonth(m, year) {
+  const cnt = Array(12).fill(0);
+  for (const c of m.customers) { const st = customerStats(m, c.id); if (!st.eligible || !st.dueDate.startsWith(String(year))) continue; cnt[+st.dueDate.slice(5, 7) - 1]++; }
+  return cnt;
+}
+export function dueInMonth(m, ym) {
+  const out = [];
+  for (const c of m.customers) { const st = customerStats(m, c.id); if (st.eligible && st.dueDate.startsWith(ym)) out.push({ c, st }); }
+  return out.sort((a, b) => (a.st.dueDate < b.st.dueDate ? -1 : a.st.dueDate > b.st.dueDate ? 1 : 0));
+}
+export function overdueBefore(m, ymd) {              // rounds that fell due before the first day of the current month
+  const out = [];
+  for (const c of m.customers) { const st = customerStats(m, c.id); if (st.eligible && st.dueDate < ymd) out.push({ c, st }); }
+  return out.sort((a, b) => (a.st.dueDate < b.st.dueDate ? -1 : 1));
+}
+
+// Calendar for a month: day -> [{c, reason}]. Reasons: 'นัดหมาย' (follow-up task recorded by sales), 'ถึงรอบ' (customer round).
 export function monthCalendar(m, ym) {
   const days = new Map();
   const add = (d, c, reason) => {
@@ -465,8 +505,7 @@ export function monthCalendar(m, ym) {
   }
   for (const c of m.customers) {
     const st = customerStats(m, c.id);
-    if (st.status === 'closed' || st.status === 'lapsed' || !st.dueDate) continue;
-    add(st.dueDate, c, 'ถึงรอบซื้อ');
+    if (st.eligible) add(st.dueDate, c, 'ถึงรอบ');
   }
   return days;
 }

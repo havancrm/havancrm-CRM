@@ -1,14 +1,17 @@
 import * as D from '../shared/domain.js';
 import { esc, icon, sheet, fmtDate } from '../ui.js';
 
-export const statusBadge = st => `<span class="badge ${st.status === 'current' ? 'ok' : st.status === 'closed' ? 'gray' : 'warn'}">${D.STATUS_TH[st.status]}</span>`;
+export const statusBadge = st => `<span class="pill ${st.status === 'current' ? 'p-grn' : st.status === 'closed' ? 'p-gry' : 'p-amb'}">${D.STATUS_TH[st.status]}</span>`;
 
+const visitText = st => !st.eligible ? 'ยังไม่มีรอบ' : st.dueDiff < 0 ? `เกินรอบ ${-st.dueDiff} วัน` : st.dueDiff === 0 ? 'ถึงรอบวันนี้' : `ถึงรอบ ${st.dueDate.slice(8, 10)}/${st.dueDate.slice(5, 7)}`;
+const pillOf = (st) => st.status === 'closed' ? '<span class="pill p-gry">เลิกกิจการ</span>' : !st.eligible ? '<span class="pill p-gry">ยังไม่มีรอบ</span>' : st.dueDiff < 0 ? `<span class="pill ${-st.dueDiff > 90 ? 'p-red' : 'p-amb'}">${visitText(st)}</span>` : `<span class="pill p-blu">${visitText(st)}</span>`;
 export function custRow(m, c, { extra = '', sub } = {}) {
   const st = D.customerStats(m, c.id);
   const labels = D.custLabels(m, c.id).slice(0, 2).join(' · ');
-  return `<div class="li" data-go="#/c/${encodeURIComponent(c.id)}"><div class="grow"><div class="t ell">${esc(c.name)}${D.isTempId(c.id) ? ' <span class="badge warn">ยังไม่มีรหัสบัญชี</span>' : ''}</div>
-    <div class="s ell">${esc(c.id)}${labels ? ' · ' + esc(labels) : ''}${sub ? ' · ' + sub : ''}</div></div>
-    <div class="r">${extra || statusBadge(st)}${!extra && st.lastDate ? `<div class="xs faint">${fmtDate(st.lastDate)}</div>` : ''}</div></div>`;
+  const bar = st.status === 'closed' ? 'var(--ln)' : st.status === 'lapsed' ? '#e0b34a' : '#6fbf8f';
+  return `<div class="cr lean" data-go="#/c/${encodeURIComponent(c.id)}" style="border-left-color:${bar}"><div class="row"><div class="grow"><b class="ell">${esc(c.name)}${D.isTempId(c.id) ? ' <span class="pill p-amb">ยังไม่มีรหัสบัญชี</span>' : ''}</b>
+    <div class="t ell">${esc(c.id)}${labels ? ' · ' + esc(labels) : ''}${sub ? ' · ' + sub : ''}</div></div>
+    <div class="ta-r">${extra || pillOf(st)}${!extra && st.lastDate ? `<div class="t">ซื้อ ${fmtDate(st.lastDate)}</div>` : ''}</div></div></div>`;
 }
 
 export const emptyMsg = t => `<div class="empty">${esc(t)}</div>`;

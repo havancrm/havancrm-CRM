@@ -29,9 +29,9 @@
 - dates use Bangkok calendar day
 - sales = SUM(bill_items.amount); VAT is never added on top
 - number parsing handles commas, blanks and text
-- customer status: current / lapsed / closed follow settings
-- buy cycle = median gap of distinct purchase dates, only with enough history
-- overdue / soon / missed-visit suggestions are computed (never stored)
+- customer status follows aCRM: ห่างหาย = ไม่ซื้อเกิน dormDays (365), ไม่เคยซื้อก็ห่างหาย, เลิกกิจการ = activeFlag FALSE
+- customer round (aCRM): last bill + visitDef days; none when no contact or silent beyond dormDays
+- suggestion groups: today / over / late(>90) / near(<=7) / nocyc are computed, never stored
 - calendar counts planned appointments and computed due dates on their day
 - legacy pairs: only user-confirmed pairs, and never when names conflict
 - same product sold as different codes (promo/dozen) is NOT merged
@@ -96,7 +96,7 @@
 - REAL import round-trip (in memory): drop the newest bills from a copy, import the real TTX, get the same sales back; second run adds nothing
 - REAL delivery slip: order 01121169 reproduces the supplied sample form field by field
 
-## E2E มือถือ 390px · test/e2e/run.mjs (60)
+## E2E มือถือ 390px · test/e2e/run.mjs (61)
 
 - app boots and renders home without console errors
 - version identical in app, service worker and server
@@ -122,7 +122,8 @@
 - calendar: tap a day lists stores below on the same page; month navigation works
 - calendar MONTH view = 12 month cards per year (count each), tap month lists stores; DAY view = day grid; choice remembered
 - completing the follow-up task closes it and adds an activity
-- cycle page: overdue / soon / missed groups equal the computed lists
+- รอบลูกค้า page (aCRM): bell badge on home = today+over+late; month cards use due date = last bill + 30; list + overdue + no-cycle links
+- เข้าพบ page (check-in): chips ถึงรอบ / ใน 5 กม. / ทั้งหมด, search box, list
 - store GPS update: writes customers.gpsLat/gpsLng/mapLink + gps row + changes log
 - photo is optional: store photo uploads, row saved and file id attached to customer
 - edit customer: only changed columns are written; other columns untouched

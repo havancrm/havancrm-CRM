@@ -22,9 +22,9 @@ export default function map({ m, query }) {
         if (me) { rows = rows.map(c => ({ c, d: distanceKm(me, { lat: +c.gpsLat, lng: +c.gpsLng }) })).sort((a, b) => a.d - b.d); }
         else rows = rows.map(c => ({ c, d: null })).sort((a, b) => String(a.c.name).localeCompare(String(b.c.name), 'th'));
         const row = x => custRow(m, x.c, { extra: `<a href="https://www.google.com/maps/dir/?api=1&destination=${x.c.gpsLat},${x.c.gpsLng}" target="_blank" rel="noopener" class="btn ghost sm">${icon('nav')}${x.d === null ? 'นำทาง' : x.d < 1 ? Math.round(x.d * 1000) + ' ม.' : x.d.toFixed(1) + ' กม.'}</a>` });
-        list.innerHTML = rows.length ? `<div class="list">${pager(rows, row, { id: 'mm', size: 40 })}</div>` : emptyMsg('ไม่พบร้านที่มีพิกัด');
+        list.innerHTML = rows.length ? `<div class="stack">${pager(rows, row, { id: 'mm', size: 40 })}</div>` : emptyMsg('ไม่พบร้านที่มีพิกัด');
         bindPager(list, rows, row, { id: 'mm', size: 40 });
-        list.onclick = e => { const li = e.target.closest('.li'); if (li && !e.target.closest('a')) { const id = decodeURIComponent(li.dataset.go.split('/').pop()); const c = m.custById.get(id); if (c) { sel = c; showMap(); e.stopPropagation(); } } };
+        list.onclick = e => { const li = e.target.closest('.cr'); if (li && !e.target.closest('a')) { const id = decodeURIComponent(li.dataset.go.split('/').pop()); const c = m.custById.get(id); if (c) { sel = c; showMap(); e.stopPropagation(); } } };
         if (!sel && rows[0]) { sel = rows[0].c; } showMap();
       };
       const showMap = () => {

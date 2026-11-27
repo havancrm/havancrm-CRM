@@ -54,7 +54,7 @@ export function buildFixtures({ now = Date.now(), customers = 80, billsPerCustom
     const cadence = 14 + (i % 6) * 9;
     const lapsed = i % 11 === 3, isNew = i % 13 === 5, overdue = i % 7 === 2 && !lapsed && !isNew;
     const nBills = isNew ? 1 + (i % 2) : billsPerCustomer;
-    let d = today - (lapsed ? 200 + (i % 50) : isNew ? 20 + (i % 30) : overdue ? Math.round(cadence * 1.8) : (i % cadence) + 1);
+    let d = today - (lapsed ? 400 + (i % 50) : isNew ? 20 + (i % 30) : overdue ? Math.round(cadence * 1.8) : (i % cadence) + 1);
     const dates = [];
     for (let b = 0; b < nBills; b++) { dates.push(d); d -= cadence + Math.floor(R() * 4); }
     dates.reverse();

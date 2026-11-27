@@ -23,18 +23,16 @@ export default function customer({ m, params, query }) {
   const hasGps = D.hasGps(c);
   const navHref = hasGps ? `https://www.google.com/maps/dir/?api=1&destination=${c.gpsLat},${c.gpsLng}` : c.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.name + ' ' + c.address)}` : '';
 
-  const hero = `<div class="hero">
-    <div class="name">${esc(c.name)}</div>
-    <div class="row sm" style="margin-top:4px;opacity:.9;flex-wrap:wrap"><span>รหัส ${esc(c.id)}</span><span class="badge" style="background:rgba(255,255,255,.2);color:#fff">${D.STATUS_TH[st.status]}</span>${D.isTempId(id) ? `<span class="badge" style="background:#ffd36b;color:#5a3b00">ยังไม่มีรหัสบัญชี</span>` : ''}${c.type ? `<span>· ${esc(c.type)}</span>` : ''}</div>
-    ${labels.length ? `<div class="chips" style="margin-top:8px">${labels.map(l => `<a class="badge" style="background:rgba(255,255,255,.18);color:#fff" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)}</a>`).join('')}</div>` : ''}
-    <div class="quick">
-      <button data-act="note">${icon('note')}บันทึก</button>
-      <button data-act="geo">${icon('camera')}รูป+พิกัด</button>
-      <a href="#/order/new?c=${encodeURIComponent(id)}">${icon('cart')}รับออเดอร์</a>
-      ${phones.length ? `<button data-act="call">${icon('phone')}โทร</button>` : `<button class="dis" disabled>${icon('phone')}โทร</button>`}
-      ${navHref ? `<a href="${esc(navHref)}" target="_blank" rel="noopener">${icon('nav')}นำทาง</a>` : `<button class="dis" disabled>${icon('nav')}นำทาง</button>`}
+  const hero = `<div class="c hd">
+    <div class="hdn">${esc(c.name)}</div>
+    <div class="t" style="margin-top:3px">รหัส ${esc(c.id)}${c.type ? ' · ' + esc(c.type) : ''}</div>
+    <div class="chips" style="margin-top:8px"><span class="pill ${st.status === 'current' ? 'p-grn' : st.status === 'closed' ? 'p-gry' : 'p-amb'}">${D.STATUS_TH[st.status]}</span>${D.isTempId(id) ? '<span class="pill p-amb">ยังไม่มีรหัสบัญชี</span>' : ''}${labels.map(l => `<a class="pill p-blu" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)}</a>`).join('')}</div>
+    <div class="g2 quick" style="margin-top:10px">
+      ${phones.length ? `<button class="btn line" data-act="call">${icon('phone')}โทร</button>` : `<button class="btn line" disabled>${icon('phone')}โทร</button>`}
+      ${navHref ? `<a class="btn line" href="${esc(navHref)}" target="_blank" rel="noopener">${icon('nav')}นำทาง</a>` : `<button class="btn line" disabled>${icon('nav')}นำทาง</button>`}
     </div></div>
-    <div class="tabs">${[['overview', 'ภาพรวม'], ['info', 'ข้อมูล'], ['history', 'ประวัติซื้อ'], ['visits', 'เข้าพบ']].map(([k, t]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+    <div class="tabs">${[['overview', 'ภาพรวม'], ['info', 'ข้อมูล'], ['history', 'ประวัติซื้อ'], ['visits', 'บันทึก']].map(([k, t]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+  const foot = `<div class="act"><button class="btn" data-act="note">${icon('pin')}เข้าพบ / บันทึก</button><button class="btn line" data-act="geo">${icon('camera')}รูป+พิกัด</button><a class="btn line" href="#/order/new?c=${encodeURIComponent(id)}">${icon('cart')}ออเดอร์</a></div>`;
 
   let body = '', after = () => {};
   if (tab === 'overview') ({ body, after } = overview(m, c, st, hasGps));
@@ -44,11 +42,11 @@ export default function customer({ m, params, query }) {
 
   return {
     title: c.name,
-    html: `<div class="stack" style="margin-top:0">${hero}${body}</div>`,
+    html: `${hero}${body}${foot}`,
     after(root) {
       root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { history.replaceState(null, '', `#/c/${encodeURIComponent(id)}?tab=${b.dataset.tab}`); window.dispatchEvent(new HashChangeEvent('hashchange')); });
       root.querySelector('[data-act="note"]')?.addEventListener('click', () => visitSheet(id));
-      root.querySelector('.quick a[target]')?.addEventListener('click', () => { enqueue('activity.log', { customerId: id, type: 'นำทาง', note: hasGps ? `${c.gpsLat},${c.gpsLng}` : 'ค้นจากที่อยู่' }).catch(() => {}); });
+      root.querySelector('a.btn[target]')?.addEventListener('click', () => { enqueue('activity.log', { customerId: id, type: 'นำทาง', note: hasGps ? `${c.gpsLat},${c.gpsLng}` : 'ค้นจากที่อยู่' }).catch(() => {}); });
       root.querySelector('[data-act="geo"]')?.addEventListener('click', () => geoPhotoSheet(id));
       root.querySelector('[data-act="call"]')?.addEventListener('click', () => {
         const logCall = ph => enqueue('activity.log', { customerId: id, type: 'โทร', note: ph }).catch(() => {});
@@ -70,11 +68,11 @@ function overview(m, c, st, hasGps) {
   const gpsRows = m.gpsByCust.get(c.id) || [];
   const lastGps = gpsRows[gpsRows.length - 1];
   const fileIds = String(c.storePhotoFileIds || '').split(',').map(s => s.trim()).filter(Boolean);
-  const cyc = st.cycle ? `รอบซื้อ ~${st.cycle} วัน · ${st.cycleState === 'overdue' ? `<b style="color:var(--bad)">เลยรอบ ${D.dayNum(m.today) - st.dueDay} วัน</b>` : st.cycleState === 'soon' ? `<b style="color:var(--warn)">ใกล้ถึงรอบ (${st.dueDay - D.dayNum(m.today)} วัน)</b>` : `ครบรอบ ${fmtDate(st.dueDate)}`}` : 'ยังไม่มีประวัติมากพอคำนวณรอบซื้อ';
+  const cyc = st.status === 'closed' ? 'เลิกกิจการ' : !st.eligible ? 'ยังไม่มีรอบ' : st.dueDiff < 0 ? `<b class="rd">เกินรอบ ${-st.dueDiff} วัน</b> (ครบรอบ ${fmtDate(st.dueDate)})` : st.dueDiff === 0 ? '<b>ถึงรอบวันนี้</b>' : `ถึงรอบ ${fmtDate(st.dueDate)} (อีก ${st.dueDiff} วัน)`;
   const pre = [c.keepNote && `<div><b>บันทึกก่อนเข้าร้าน</b><br>${esc(c.keepNote).replace(/\n/g, '<br>')}</div>`, c.specialConditions && `<div><b>เงื่อนไขพิเศษ</b><br>${esc(c.specialConditions)}</div>`, c.storeHours && `<div class="sm muted">เวลาเปิด-ปิด ${esc(c.storeHours)}</div>`, lv?.note && `<div class="sm muted">เข้าพบล่าสุด ${fmtDate(D.dateOf(lv.at))}: ${esc(lv.note)}</div>`].filter(Boolean);
   const body = `
     <div class="card soft"><div class="row between"><div class="sm muted">ซื้อล่าสุด</div><div class="b">${st.lastDate ? `${fmtDate(st.lastDate)} · ${st.daysSince} วันที่แล้ว` : '—'}</div></div>
-      <div class="sm" style="margin-top:4px">${cyc}</div>
+      <div class="sm" style="margin-top:4px">รอบลูกค้า: ${cyc}</div>
       <div class="row between sm muted" style="margin-top:6px"><span>${st.bills} บิล · ยอดรวม ${D.money(st.total)} ฿</span><span>เข้าพบล่าสุด ${st.lastVisit ? fmtDate(st.lastVisit) : 'ยังไม่เคย'}</span></div></div>
     ${pre.length ? `<div class="banner" style="background:var(--blue-soft);color:var(--ink)">${pre.join('<div style="height:6px"></div>')}</div>` : ''}
     <div class="sec"><span>บิลล่าสุด</span>${lb ? `<a href="#/c/${encodeURIComponent(c.id)}?tab=history">ทั้งหมด</a>` : ''}</div>

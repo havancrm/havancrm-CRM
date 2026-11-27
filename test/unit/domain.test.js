@@ -29,7 +29,7 @@ test('number parsing handles commas, blanks and text', () => {
   assert.equal(D.num('1,234.50'), 1234.5); assert.equal(D.num(''), 0); assert.equal(D.num('abc'), 0); assert.equal(D.num(undefined), 0);
 });
 
-test('customer status: current / lapsed / closed follow settings', () => {
+test('customer status follows aCRM: ห่างหาย = ไม่ซื้อเกิน dormDays (365), ไม่เคยซื้อก็ห่างหาย, เลิกกิจการ = activeFlag FALSE', () => {
   const m = model();
   const k = D.customerCounts(m);
   assert.equal(k.all, m.customers.length);
@@ -38,35 +38,38 @@ test('customer status: current / lapsed / closed follow settings', () => {
   for (const c of m.customers) {
     const st = D.customerStats(m, c.id);
     if (D.isClosedFlag(c.activeFlag)) assert.equal(st.status, 'closed');
-    else if (st.lastDate && st.daysSince <= m.settings.lateDays) assert.equal(st.status, 'current');
+    else if (st.lastDate && st.daysSince <= m.settings.dormDays) assert.equal(st.status, 'current');
     else assert.equal(st.status, 'lapsed');
   }
-  // lowering the threshold moves customers out of "current"
-  const m2 = model(); m2.settings.lateDays = 5; m2._stats.clear();
+  assert.equal(m.settings.dormDays, 365); assert.equal(m.settings.visitDef, 30); assert.equal(m.settings.lateDays, 90); assert.equal(m.settings.nearDays, 7);
+  const m2 = model(); m2.settings.dormDays = 5; m2._stats.clear();
   assert.ok(D.customerCounts(m2).current < k.current);
 });
 
-test('buy cycle = median gap of distinct purchase dates, only with enough history', () => {
-  const raw = { customers: [{ id: '1', name: 'a', activeFlag: 'TRUE' }], bills: [], bill_items: [], systemSettings: [] };
-  const today = D.todayStr(NOW), t = D.dayNum(today);
-  [t - 60, t - 40, t - 20].forEach((d, i) => { raw.bills.push({ no: 'B' + i, date: D.dayStr(d), customerId: '1' }); });
+test('customer round (aCRM): last bill + visitDef days; none when no contact or silent beyond dormDays', () => {
+  const raw = { customers: [{ id: '1', name: 'a', activeFlag: 'TRUE' }, { id: '2', name: 'b', activeFlag: 'TRUE' }, { id: '3', name: 'c', activeFlag: 'TRUE' }], bills: [], bill_items: [], systemSettings: [] };
+  const t = D.dayNum(D.todayStr(NOW));
+  raw.bills.push({ no: 'B1', date: D.dayStr(t - 30), customerId: '1' });   // due today
+  raw.bills.push({ no: 'B2', date: D.dayStr(t - 50), customerId: '2' });   // 20 days overdue
   const m = D.buildModel(raw, NOW);
-  const st = D.customerStats(m, '1');
-  assert.equal(st.cycle, 20);
-  assert.equal(st.dueDate, D.dayStr(t));          // last + 20 days = today
-  assert.equal(st.cycleState, 'soon');
-  raw.bills.pop();                                 // only 2 dates -> no cycle claimed
-  const m2 = D.buildModel(raw, NOW);
-  assert.equal(D.customerStats(m2, '1').cycle, null);
-  assert.equal(D.customerStats(m2, '1').cycleState, 'none');
+  const a = D.customerStats(m, '1'), b = D.customerStats(m, '2'), c = D.customerStats(m, '3');
+  assert.equal(a.dueDate, D.dayStr(t)); assert.equal(a.dueDiff, 0); assert.equal(D.visitLabel(m, a), 'ถึงรอบวันนี้');
+  assert.equal(b.dueDiff, -20); assert.equal(D.visitLabel(m, b), 'เกินรอบ 20 วัน');
+  assert.equal(c.eligible, false); assert.equal(D.visitLabel(m, c), 'ยังไม่มีรอบ');
+  raw.bills.push({ no: 'B3', date: D.dayStr(t - 400), customerId: '3' });  // silent > dormDays -> no round
+  assert.equal(D.customerStats(D.buildModel(raw, NOW), '3').eligible, false);
 });
 
-test('overdue / soon / missed-visit suggestions are computed (never stored)', () => {
+test('suggestion groups: today / over / late(>90) / near(<=7) / nocyc are computed, never stored', () => {
   const m = model();
   const s = D.suggestions(m);
-  for (const x of s.overdue) assert.equal(x.st.cycleState, 'overdue');
-  for (const x of s.soon) assert.ok(x.days >= 0 && x.days <= m.settings.soonDays);
-  for (const x of s.missed) assert.ok(x.st.visitDue && x.st.status === 'current');
+  for (const x of s.today) assert.equal(x.st.dueDiff, 0);
+  for (const x of s.over) assert.ok(x.st.dueDiff < 0 && -x.st.dueDiff <= m.settings.lateDays);
+  for (const x of s.late) assert.ok(-x.st.dueDiff > m.settings.lateDays);
+  for (const x of s.near) assert.ok(x.st.dueDiff > 0 && x.st.dueDiff <= m.settings.nearDays);
+  for (const x of s.nocyc) assert.equal(x.st.eligible, false);
+  const y = +m.today.slice(0, 4);
+  assert.equal(D.dueByMonth(m, y).length, 12);
 });
 
 test('calendar counts planned appointments and computed due dates on their day', () => {

@@ -28,6 +28,8 @@ const P = {
   x: 'M6 6l12 12M18 6L6 18',
   chev: 'M9 5l7 7-7 7',
   gift: 'M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-2 0-4-1-3.5-3S12 5 12 7zm0 0c2 0 4-1 3.5-3S12 5 12 7z',
+  bell: 'M6 16V11a6 6 0 1112 0v5l1.5 2h-15zM10 21h4',
+  share: 'M12 4v11M8 8l4-4 4 4M5 13v7h14v-7',
   dl: 'M12 4v11M7 11l5 5 5-5M5 20h14',
 };
 export const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[n] || ''}"/></svg>`;

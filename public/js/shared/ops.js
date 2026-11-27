@@ -185,7 +185,7 @@ export function expandOp(op, ctx) {
     }
     case 'settings.save': {
       const d = p.data || {};
-      const allowed = ['visitDef', 'dormDays', 'lateDays', 'soonDays', 'minCycleBills', 'newDays', 'comm', 'vatRate'];
+      const allowed = ['visitDef', 'dormDays', 'lateDays', 'nearDays', 'newDays', 'comm', 'vatRate'];
       const clean = {};
       for (const k of Object.keys(d)) { need(allowed.includes(k), `ไม่รู้จักการตั้งค่า ${k}`); const n = num(d[k]); need(n >= 0 && n <= 3650, `ค่า ${k} ไม่อยู่ในช่วงที่ยอมรับ`); clean[k] = n; }
       need(Object.keys(clean).length, 'ไม่มีค่าที่จะบันทึก');

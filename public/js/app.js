@@ -8,7 +8,8 @@ const reg = (re, mod, opts = {}) => routes.push({ re, mod, ...opts });
 reg(/^\/$/, 'home', { nav: 'home', title: 'HAVAN CRM', top: true });
 reg(/^\/customers$/, 'customers', { nav: 'customers', title: 'ลูกค้า', top: true });
 reg(/^\/c\/([^/]+)$/, 'customer', { nav: 'customers', title: 'ลูกค้า' });
-reg(/^\/visits$/, 'visits', { nav: 'visits', title: 'เข้าพบ', top: true });
+reg(/^\/visits$/, 'checkin', { nav: 'visits', title: 'เข้าพบ', top: true });
+reg(/^\/follow$/, 'visits', { nav: 'home', title: 'รอบลูกค้า' });
 reg(/^\/orders$/, 'orders', { nav: 'orders', title: 'ออเดอร์', top: true });
 reg(/^\/order\/([^/]+)$/, 'order', { nav: 'orders', title: 'รับออเดอร์' });
 reg(/^\/settings$/, 'settings', { nav: 'settings', title: 'ตั้งค่า', top: true });
@@ -17,7 +18,7 @@ reg(/^\/sales$/, 'sales', { nav: 'home', title: 'รายงานยอดข�
 reg(/^\/new$/, 'newcustomers', { nav: 'home', title: 'ลูกค้าใหม่' });
 reg(/^\/map$/, 'map', { nav: 'home', title: 'แผนที่' });
 
-const NAV = [['home', '#/', 'home', 'หน้าแรก'], ['customers', '#/customers', 'users', 'ลูกค้า'], ['visits', '#/visits', 'pin', 'เข้าพบ'], ['orders', '#/orders', 'cart', 'ออเดอร์'], ['settings', '#/settings', 'gear', 'ตั้งค่า']];
+const NAV = [['home', '#/', 'home', 'หน้าหลัก'], ['customers', '#/customers', 'users', 'ลูกค้า'], ['visits', '#/visits', 'pin', 'เข้าพบ', 'fab'], ['orders', '#/orders', 'cart', 'ออเดอร์'], ['settings', '#/settings', 'gear', 'ตั้งค่า']];
 const $ = s => document.querySelector(s);
 const pageCache = {};
 const scrollMem = new Map();
@@ -34,16 +35,17 @@ export const back = fallback => { if (history.length > 1) history.back(); else g
 
 function paintShell(route) {
   const top = route?.top;
-  $('#nav').innerHTML = NAV.map(([k, h, ic, t]) => `<a href="${h}" class="${route?.nav === k ? 'on' : ''}" aria-label="${t}">${icon(ic)}<span>${t}</span></a>`).join('');
+  $('#nav').innerHTML = NAV.map(([k, h, ic, t, f]) => `<a href="${h}" class="${f || ''} ${route?.nav === k ? 'on' : ''}" aria-label="${t}">${f ? `<i>${icon(ic)}</i>` : icon(ic)}<span>${t}</span></a>`).join('');
   paintHeader(route?.title, top);
 }
 function paintHeader(title, top) {
   const pend = pendingCount(), failed = S.failed.length;
-  const state = S.syncing ? 'กำลังซิงก์…' : !S.online ? 'ออฟไลน์' : failed ? `ค้าง ${failed}` : pend ? `รอส่ง ${pend}` : 'ซิงก์แล้ว';
-  const cls = !S.online ? 'off' : failed ? 'err' : '';
-  $('#hdr').innerHTML = `${top ? '' : `<button class="ibtn" data-back aria-label="ย้อนกลับ">${icon('back')}</button>`}<div class="ttl" id="ttl">${esc(title || '')}</div><button class="sync" data-go="#/settings/sync" aria-label="สถานะซิงก์"><span class="dot ${cls}"></span>${state}</button>`;
+  const state = S.syncing ? 'กำลังซิงก์…' : !S.online ? 'ออฟไลน์' : failed ? `ค้าง ${failed}` : pend ? `รอส่ง ${pend}` : `ซิงก์ ${new Date(S.lastSync || Date.now()).toTimeString().slice(0, 5)}`;
+  const cls = !S.online ? 'x' : failed ? 'err' : pend ? 'w' : '';
+  const d = new Date(), be = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear() + 543}`;
+  $('#hdr').innerHTML = `<div class="rw"><div class="brand"><i></i><span id="ttl">HAVAN CRM</span></div><button class="hbtn" data-go="#/settings/sync" aria-label="อัปเดต/ซิงก์">${icon('refresh')}${failed ? `<em class="bdg">${failed}</em>` : ''}</button></div><button class="st" data-go="#/settings/sync" aria-label="สถานะซิงก์">${be} · <span class="dot ${cls}"></span> ${state}</button>`;
 }
-export const setTitle = t => { const el = $('#ttl'); if (el) el.textContent = t; document.title = `${t} · HAVAN CRM`; };
+export const setTitle = t => { document.title = `${t} · HAVAN CRM`; };
 
 async function render() {
   const { path, query, raw } = parseHash();
@@ -61,7 +63,8 @@ async function render() {
     const mod = pageCache[route.mod] || (pageCache[route.mod] = await import(`./pages/${route.mod}.js?v=${encodeURIComponent(VERSION)}`));
     const out = await mod.default({ params: m.slice(1).map(decodeURIComponent), query, m: S.model, path });
     const html = typeof out === 'string' ? out : out.html;
-    view.innerHTML = (S.health?.mode === 'memory' ? `<div class="banner" style="margin-bottom:12px"><b>โหมดทดลอง</b> — ข้อมูลจำลอง ไม่ใช่ฐาน Google Sheets จริง (รีเซ็ตเมื่อเซิร์ฟเวอร์รีสตาร์ต)</div>` : '') + html;
+    view.innerHTML = (S.health?.mode === 'memory' ? `<div class="banner"><b>โหมดทดลอง</b> — ข้อมูลจำลอง ไม่ใช่ฐาน Google Sheets จริง (รีเซ็ตเมื่อเซิร์ฟเวอร์รีสตาร์ต)</div>` : '') + html;
+    if (!route.top) view.insertAdjacentHTML('afterbegin', `<div class="top"><button class="bk" data-back aria-label="ย้อนกลับ">${icon('back')} กลับ</button><h1>${esc(out.title || route.title || '')}</h1></div>`);
     if (out.title) setTitle(out.title); else if (route.title) document.title = `${route.title} · HAVAN CRM`;
     if (out.after) current.cleanup = out.after(view) || null;
   } catch (e) {
@@ -93,7 +96,7 @@ function flushRender() {
 }
 subscribe(() => {
   const { path } = parseHash();
-  paintHeader($('#ttl')?.textContent, routes.find(r => r.re.test(path))?.top);
+  paintHeader('', routes.find(r => r.re.test(path))?.top);
   flushRender();
 });
 document.addEventListener('focusout', () => { if (dirty) setTimeout(() => { if (dirty && !busy()) flushRender(); }, 200); });
