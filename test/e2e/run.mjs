@@ -188,20 +188,24 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     await page.fill('#vn', APPT); await page.fill('#vd', apptDay); await page.click('#vs');
     const r = await until(async () => { const x = await raw(); return x.tasks.find(t => t.note === APPT) && x; }); const t = r.tasks.find(t => t.note === APPT);
     ok(t.type === 'ติดตาม' && t.status === 'open' && t.dueAt === apptDay + ' 00:00:00' && t.owner === 'dev@local', JSON.stringify(t)); ok(r.activities.some(a => a.type === 'ติดตาม' && a.refId === t.taskId), 'activity');
-    await go(`#/visits?tab=cal&ym=${apptDay.slice(0, 7)}&d=${apptDay}`); await sleep(300);
+    await go(`#/visits?tab=cal&v=day&ym=${apptDay.slice(0, 7)}&d=${apptDay}`); await sleep(300);
     const cell = await page.locator(`[data-d="${apptDay}"] b`).innerText(); ok(+cell >= 1, 'calendar count ' + cell); ok((await view().innerText()).includes(M0.custById.get(CID).name), 'customer under date');
   });
   await step('calendar: tap a day lists stores below on the same page; month navigation works', async () => {
     const before = page.url(); await page.locator('[data-m="1"]').click(); await sleep(250); ok(page.url() === before || page.url().includes('visits'), 'left page');
     await page.locator('[data-m="-1"]').click(); await sleep(250); await page.locator(`[data-d="${apptDay}"]`).click(); await sleep(200); ok((await view().innerText()).includes('ร้าน'), 'list');
   });
-  await step('calendar can be shown by MONTH or by DAY (choice remembered); day view has prev/next/today and lists the stores', async () => {
-    await go(`#/visits?tab=cal&ym=${apptDay.slice(0, 7)}&d=${apptDay}&v=month`); ok(await page.locator('.cal').count() === 1, 'month grid');
-    await page.locator('[data-vm="day"]').click(); await sleep(300); ok(await page.locator('.cal').count() === 0, 'grid still shown'); ok((await view().innerText()).includes('ร้าน'), 'day header');
-    const t0 = await page.locator('[data-dd="1"]').count(); ok(t0 === 1, 'next day'); await page.locator('[data-dd="-1"]').click(); await page.locator('[data-dd="1"]').click(); await sleep(200);
-    await page.locator('[data-today]').click(); await sleep(200); ok((await view().innerText()).includes('วันนี้'), 'today');
-    await page.fill('#dp', apptDay); await page.dispatchEvent('#dp', 'change'); await sleep(300); ok((await view().innerText()).includes(M0.custById.get(CID).name), 'appointment store in day view'); await shot('calendar-day');
-    await go('#/visits?tab=cal'); ok(await page.locator('.cal').count() === 0, 'mode not remembered'); await page.locator('[data-vm="month"]').click(); await sleep(200); ok(await page.locator('.cal').count() === 1, 'back to month');
+  await step('calendar MONTH view = 12 month cards per year (count each), tap month lists stores; DAY view = day grid; choice remembered', async () => {
+    await go(`#/visits?tab=cal&v=month&ym=${apptDay.slice(0, 7)}`); await sleep(300);
+    ok(await page.locator('.mcard').count() === 12 && await page.locator('.cal').count() === 0, 'month cards');
+    const m2 = D.buildModel(await raw(), Date.now()); const ym = apptDay.slice(0, 7); const exp = [...D.monthCalendar(m2, ym).values()].reduce((s, a) => s + a.length, 0);
+    const shown = +(await page.locator(`.mcard.sel b`).innerText()); ok(shown === exp && exp >= 1, `month count ${shown} vs ${exp}`);
+    ok((await view().innerText()).includes(M0.custById.get(CID).name), 'store listed under month'); await shot('calendar-month-cards');
+    await page.locator('.mcard').nth(0).click(); await sleep(200); ok((await page.locator('.mcard.sel span').innerText()).includes('ม.ค.'), 'month tap');
+    const y0 = await page.locator('[data-y].on').innerText(); await page.locator('[data-y]').last().click(); await sleep(200); ok((await page.locator('[data-y].on').innerText()) !== y0, 'year switch');
+    await page.locator('[data-vm="day"]').click(); await sleep(300); ok(await page.locator('.cal').count() === 1 && await page.locator('.mcard').count() === 0, 'day grid'); await shot('calendar-day');
+    await go('#/visits?tab=cal'); ok(await page.locator('.cal').count() === 1, 'mode not remembered');
+    await page.locator('[data-vm="month"]').click(); await sleep(200); ok(await page.locator('.mcard').count() === 12, 'back to cards');
   });
   await step('completing the follow-up task closes it and adds an activity', async () => {
     await go(`#/c/${CID}?tab=visits`); await page.locator('[data-done]').first().click(); await page.waitForSelector('.sheet #cs'); await page.click('#cs');
