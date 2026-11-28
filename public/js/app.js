@@ -24,6 +24,8 @@ const pageCache = {};
 const scrollMem = new Map();
 let current = { hash: '', cleanup: null };
 let forward = false;
+let renderEpoch = 0;
+let visibilityBound = false;
 
 export function parseHash() {
   const h = location.hash.replace(/^#/, '') || '/';
@@ -48,6 +50,7 @@ function paintHeader(title, top) {
 export const setTitle = t => { document.title = `${t} · HAVAN CRM`; };
 
 async function render() {
+  const epoch = ++renderEpoch;
   const { path, query, raw } = parseHash();
   let route, m;
   for (const r of routes) { m = r.re.exec(path); if (m) { route = r; break; } }
@@ -61,18 +64,21 @@ async function render() {
   if (!S.model) { view.innerHTML = `<div class="empty">กำลังโหลดข้อมูล…</div>`; return; }
   try {
     const mod = pageCache[route.mod] || (pageCache[route.mod] = await import(`./pages/${route.mod}.js?v=${encodeURIComponent(VERSION)}`));
+    if (epoch !== renderEpoch) return;
     const out = await mod.default({ params: m.slice(1).map(decodeURIComponent), query, m: S.model, path });
+    if (epoch !== renderEpoch) return;
     const html = typeof out === 'string' ? out : out.html;
     view.innerHTML = (S.health?.mode === 'memory' ? `<div class="banner"><b>โหมดทดลอง</b> — ข้อมูลจำลอง ไม่ใช่ฐาน Google Sheets จริง (รีเซ็ตเมื่อเซิร์ฟเวอร์รีสตาร์ต)</div>` : '') + html;
     if (!route.top) view.insertAdjacentHTML('afterbegin', `<div class="top"><button class="bk" data-back aria-label="ย้อนกลับ">${icon('back')} กลับ</button><h1>${esc(out.title || route.title || '')}</h1></div>`);
     if (out.title) setTitle(out.title); else if (route.title) document.title = `${route.title} · HAVAN CRM`;
     if (out.after) current.cleanup = out.after(view) || null;
   } catch (e) {
+    if (epoch !== renderEpoch) return;
     console.error(e);
     view.innerHTML = `<div class="banner bad">เปิดหน้านี้ไม่สำเร็จ: ${esc(e.message)}</div>`;
   }
   const y = !forward ? scrollMem.get(raw) : 0; forward = false;
-  requestAnimationFrame(() => scrollTo(0, y || 0));
+  requestAnimationFrame(() => { if (epoch === renderEpoch) scrollTo(0, y || 0); });
 }
 
 // global delegated navigation
@@ -132,7 +138,10 @@ async function start() {
   render();
   flush().catch(e => { if (e.status === 401 || e.status === 403) showLogin('เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง (งานที่ค้างจะไม่หาย)'); });
   // refresh stale data when the app comes back to the foreground
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - S.lastSync > 10 * 60000) refresh({ quiet: true }).catch(() => {}); });
+  if (!visibilityBound) {
+    visibilityBound = true;
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - S.lastSync > 10 * 60000) refresh({ quiet: true }).catch(() => {}); });
+  }
 }
 
 (async () => {
