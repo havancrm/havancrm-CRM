@@ -9,12 +9,18 @@ export default function customers({ m, query }) {
   const label = query.label || '', q = query.q || '';
   const f0 = query.f || 'all';
   const cnt = D.customerCounts(m);
+  const labelGroups = new Map();
+  for (const c of m.customers) for (const l of new Set(D.custLabels(m, c.id))) {
+    if (!labelGroups.has(l)) labelGroups.set(l, new Set());
+    labelGroups.get(l).add(c.id);
+  }
+  const allLabels = [...labelGroups].sort((a,b) => b[1].size-a[1].size || a[0].localeCompare(b[0],'th'));
   const html = `<div class="stack">
     <div class="g4" id="kp">${FILTERS.slice(0, 4).map(([k, t]) => `<button class="kp ${f0 === k ? 'on' : ''}" data-f="${k}"><b>${cnt[k]}</b>${t}</button>`).join('')}</div>
     <div class="row"><div class="sr grow">${icon('search')}<input id="cq" type="search" value="${esc(q)}" placeholder="ค้นหาลูกค้า ชื่อ รหัส เบอร์ ป้ายกำกับ" autocomplete="off"></div><button class="btn sm" id="addc">${icon('plus')} ร้านใหม่</button></div>
     <div class="chips">${FILTERS.slice(4).map(([k, t]) => `<button class="chip ${f0 === k ? 'on' : ''}" data-f="${k}">${t}</button>`).join('')}</div>
     ${label ? `<div class="row"><span class="badge">ป้าย: ${esc(label)}</span><button class="btn ghost sm" id="clr">ล้างป้าย</button></div>` : ''}
-    <div class="t" id="cnt"></div><div id="clist"></div></div>`;
+    ${query.labels === '1' ? `<div class="c"><div class="sec">ป้ายกำกับทั้งหมด (${allLabels.length})</div><div class="sr">${icon('search')}<input id="lq" type="search" placeholder="ค้นหาป้ายกำกับ"></div><div id="labels-list" class="chips"></div></div>` : ''}<div class="t" id="cnt"></div><div id="clist"></div></div>`;
   return {
     html, title: 'ลูกค้า',
     after(root) {
@@ -32,6 +38,11 @@ export default function customers({ m, query }) {
         list.innerHTML = rows.length ? `<div class="stack">${pager(rows, c => custRow(m, c), { id: 'cl' })}</div>` : emptyMsg('ไม่พบลูกค้า');
         bindPager(list, rows, c => custRow(m, c), { id: 'cl' });
       };
+      const labelsList = root.querySelector('#labels-list'), lq = root.querySelector('#lq');
+      if (labelsList && lq) {
+        const drawLabels = () => { const t = D.normText(lq.value); labelsList.innerHTML = allLabels.filter(([l]) => D.normText(l).includes(t)).map(([l,ids]) => `<a class="chip" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)} · ${ids.size}</a>`).join('') || emptyMsg('ไม่พบป้ายกำกับ'); };
+        lq.addEventListener('input', drawLabels); drawLabels();
+      }
       draw();
       root.querySelector('#addc').onclick = () => newCustomerSheet();
       inp.addEventListener('input', () => { upd({ q: inp.value.trim() }); draw(); });
