@@ -1,5 +1,5 @@
 import * as D from '../shared/domain.js';
-import { esc, icon, debounce } from '../ui.js';
+import { esc, icon } from '../ui.js';
 import { custRow, pager, bindPager, emptyMsg } from './common.js';
 import { newCustomerSheet } from './forms.js';
 
@@ -22,7 +22,7 @@ export default function customers({ m, query }) {
       const upd = (patch) => { const nq = { ...query, ...patch }; for (const k of Object.keys(nq)) if (!nq[k] || (k === 'f' && nq[k] === 'all')) delete nq[k]; history.replaceState(null, '', '#/customers' + (Object.keys(nq).length ? '?' + new URLSearchParams(nq) : '')); Object.assign(query, patch); };
       const draw = () => {
         const term = inp.value.trim();
-        let rows = term ? D.searchCustomers(m, term, 400) : m.customers;
+        let rows = term ? D.searchCustomers(m, term, m.customers.length) : m.customers;
         const f = query.f || 'all';
         const keep = new Set(D.customersBy(m, f).map(c => c.id));
         rows = rows.filter(c => keep.has(c.id));
@@ -34,9 +34,9 @@ export default function customers({ m, query }) {
       };
       draw();
       root.querySelector('#addc').onclick = () => newCustomerSheet();
-      inp.addEventListener('input', debounce(() => { upd({ q: inp.value.trim() }); draw(); }));
+      inp.addEventListener('input', () => { upd({ q: inp.value.trim() }); draw(); });
       root.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { upd({ f: b.dataset.f }); root.querySelectorAll('[data-f]').forEach(x => x.classList.toggle('on', x.dataset.f === b.dataset.f)); draw(); });
-      root.querySelector('#clr')?.addEventListener('click', () => { location.hash = '#/customers' + ((query.f || 'all') !== 'all' ? `?f=${query.f}` : ''); });
+      root.querySelector('#clr')?.addEventListener('click', () => { const next = new URLSearchParams(); if ((query.f || 'all') !== 'all') next.set('f', query.f); if (inp.value.trim()) next.set('q', inp.value.trim()); location.hash = '#/customers' + (next.size ? '?' + next : ''); });
     },
   };
 }
