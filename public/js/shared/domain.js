@@ -107,7 +107,11 @@ export function buildModel(raw, now = Date.now()) {
   m.billsByCust = groupBy(m.bills, 'customerId', (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.no < b.no ? -1 : 1));
   m.visitsByCust = groupBy(raw.visits || [], 'customerId', (a, b) => String(a.at || a.plannedAt).localeCompare(String(b.at || b.plannedAt)));
   m.tasksByCust = groupBy(raw.tasks || [], 'customerId');
-  m.activitiesByCust = groupBy(raw.activities || [], 'customerId');
+  const cancelledVisits = new Set((raw.visits || []).filter(recordCancelled).map(r => r.visitId));
+  const cancelledTasks = new Set((raw.tasks || []).filter(recordCancelled).map(r => r.taskId));
+  const activities = (raw.activities || []).filter(a =>
+    !(a.refType === 'visit' && cancelledVisits.has(a.refId)) && !(a.refType === 'task' && cancelledTasks.has(a.refId)));
+  m.activitiesByCust = groupBy(activities, 'customerId');
   m.gpsByCust = groupBy(raw.gps || [], 'customerId');
   m.photosByCust = groupBy(raw.photos || [], 'customerId');
   m.orders = raw.orders || [];
@@ -143,6 +147,8 @@ export function hasGps(c) {
   const la = parseFloat(c.gpsLat), lo = parseFloat(c.gpsLng);
   return Number.isFinite(la) && Number.isFinite(lo) && !(la === 0 && lo === 0) && Math.abs(la) <= 90 && Math.abs(lo) <= 180;
 }
+
+export const recordCancelled = row => /^(?:cancelled|canceled)$/i.test(String(row.status || ''));
 
 export function visitDone(v) {
   const st = String(v.status || '').toLowerCase();

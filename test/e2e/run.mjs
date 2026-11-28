@@ -241,6 +241,51 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
     const r = await until(async () => { const x = await raw(); return x.tasks.find(t => t.note?.includes(APPT) && t.status === 'done') && x; }); ok(r, 'task not done');
     ok(r.tasks.find(t => t.note?.includes(APPT)).completedAt, 'completedAt');
   });
+  await step('visits can be edited and removed while retaining their GPS and audit history', async () => {
+    const v = (await raw()).visits.find(row => row.note === NOTE);
+    await go(`#/c/${CID}?tab=visits`);
+    const button = page.locator(`[data-edit-record="${v.visitId}"]`);
+    await button.click();
+    await page.locator('.sheet textarea').fill('แก้บันทึกเข้าพบ E2E');
+    await page.locator('.sheet [data-save]').click();
+    ok(await until(async () => (await raw()).visits.find(row => row.visitId === v.visitId)?.note === 'แก้บันทึกเข้าพบ E2E'), 'visit edit was not synced');
+    await button.click();
+    await page.locator('.sheet [data-remove]').click();
+    await page.locator('#cfm-ok').click();
+    const updated = await until(async () => {
+      const result = await raw();
+      return result.visits.find(row => row.visitId === v.visitId)?.status === 'CANCELLED' && result;
+    });
+    ok(updated && updated.gps.some(row => row.visitId === v.visitId), 'visit history or GPS was lost');
+    await button.waitFor({ state: 'detached' });
+    ok(!(await view().innerText()).includes(NOTE), 'linked activity still visible for cancelled visit');
+  });
+  await step('pending appointments can be rescheduled and removed from the calendar', async () => {
+    const opId = 'e2e-reschedule-' + Date.now();
+    const result = await api('/api/ops', { method: 'POST', body: JSON.stringify({ ops: [{ opId, type: 'visit.log', payload: { customerId: CID, kind: 'appointment', plannedAt: apptDay, time: '09:00', note: 'e2e-reschedule' } }] }) });
+    ok(result.body.results[0].status === 'ok', 'failed to create appointment fixture');
+    await page.evaluate(async () => { const d = await import('/js/data.js'); await d.refresh(); });
+    await go(`#/c/${CID}?tab=visits`);
+    const taskId = `T-${opId}`, changed = D.dayStr(D.dayNum(apptDay) + 1);
+    const button = page.locator(`[data-edit-record="${taskId}"]`);
+    await button.click();
+    await page.locator('.sheet [data-date]').fill(changed);
+    await page.locator('.sheet [data-time]').fill('15:00');
+    await page.locator('.sheet [data-save]').click();
+    const edited = await until(async () => {
+      const row = (await raw()).tasks.find(row => row.taskId === taskId);
+      return row.dueAt.startsWith(changed) && row;
+    });
+    ok(edited && D.parseJson(edited.data).time === '15:00' && D.parseJson(edited.data)._lastOpId === opId, 'reschedule did not preserve other task data');
+    await button.click();
+    await page.locator('.sheet [data-remove]').click();
+    await page.locator('#cfm-ok').click();
+    ok(await until(async () => (await raw()).tasks.find(row => row.taskId === taskId)?.status === 'cancelled'), 'cancellation not synced');
+    await button.waitFor({ state: 'detached' });
+    const model = D.buildModel(await raw(), Date.now());
+    const entry = (D.monthCalendar(model, changed.slice(0, 7)).get(changed) || []).find(row => row.c.id === CID && row.reason === 'นัดหมาย');
+    ok(!entry, 'cancelled appointment still counted');
+  });
   await step('รอบลูกค้า page (aCRM): bell badge on home = today+over+late; month cards use due date = last bill + 30; list + overdue + no-cycle links', async () => {
     const m3 = D.buildModel(await raw(), Date.now()); const s = D.suggestions(m3); const exp = s.today.length + s.over.length + s.late.length;
     await go('#/'); const badge = await page.locator('.hacts .bdg').innerText().catch(() => '0'); ok(badge === (exp > 99 ? '99+' : String(exp)) || exp === 0, `badge ${badge} vs ${exp}`);
@@ -472,7 +517,7 @@ async function shot(n) { await page.screenshot({ path: `${OUT}/${n}.png`, fullPa
   await step('note can be edited and removed from the customer timeline with a retained history row', async () => {
     const activity = (await raw()).activities.find(a => a.customerId === CID && a.note.startsWith('e2e-offline-'));
     await go(`#/c/${CID}?tab=visits`);
-    const edit = page.locator(`[data-edit-note="${activity.activityId}"]`);
+    const edit = page.locator(`[data-edit-record="${activity.activityId}"]`);
     await edit.click();
     await page.locator('.sheet textarea').fill('โน้ตแก้ไข E2E');
     await page.locator('.sheet [data-save]').click();

@@ -1,5 +1,5 @@
 // Keep the app shell and its modules together for the life of this worker.
-const VERSION = '1.0.0+89576cf';
+const VERSION = '1.0.0+18d979e';
 const CACHE = `havan-crm-${VERSION}`;
 const PAGES = ['checkin', 'common', 'customer', 'customers', 'forms', 'home', 'map', 'newcustomers', 'order', 'orders', 'sales', 'settings', 'visits'];
 const SHELL = [

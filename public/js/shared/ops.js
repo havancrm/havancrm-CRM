@@ -3,7 +3,7 @@
 // (optimistic UI / offline queue). Rows follow the conventions aCRM already wrote into this sheet
 // (Thai activity types, visit status COMPLETED, follow-up tasks type "ติดตาม", order status รอส่ง/ส่งแล้ว ...).
 // Every row that has an opId column gets a deterministic opId so a re-sent op is detected and skipped.
-import { nowIso, num, parseJson, todayStr, ORDER_ST_LIST, ORDER_ST, tempCustomerId, isTempId, NEW_PREFIX } from './domain.js';
+import { nowIso, num, parseJson, todayStr, dayNum, dayStr, ORDER_ST_LIST, ORDER_ST, tempCustomerId, isTempId, NEW_PREFIX } from './domain.js';
 
 export const CUSTOMER_EDITABLE = ['name','type','address','contactName','paymentTerm','billClerk','activeFlag','lineId','keepNote','customerNote','specialConditions','storeHours','taxInvoiceRequired','taxName','taxAddress','taxBranch','taxId','receiptRequired','documentNote','birthday'];
 export const ADMIN_OPS = new Set(['settings.save', 'label.rename', 'label.delete', 'import.commit', 'review.update', 'customer.assignCode']);
@@ -19,6 +19,8 @@ const str = v => (v === undefined || v === null ? '' : String(v));
 const mapLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
 const okLat = v => Number.isFinite(+v) && Math.abs(+v) <= 90 && String(v).trim() !== '';
 const okLng = v => Number.isFinite(+v) && Math.abs(+v) <= 180 && String(v).trim() !== '';
+const timeOfDay = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/;
+const isDate = date => /^\d{4}-\d{2}-\d{2}$/.test(date) && dayStr(dayNum(date)) === date;
 const dueStamp = d => `${String(d).slice(0, 10)} 00:00:00`;          // same text form aCRM used in tasks.dueAt
 
 export function expandOp(op, ctx) {
@@ -51,7 +53,7 @@ export function expandOp(op, ctx) {
       if (kind === 'appointment') {                            // aCRM: appointments are follow-up tasks "ติดตาม"
         need(/^\d{4}-\d{2}-\d{2}/.test(str(p.plannedAt)), 'ต้องระบุวันที่นัดหมาย');
         const time = str(p.time);
-        need(!time || /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(time), 'เวลานัดไม่ถูกต้อง');
+        need(!time || timeOfDay.test(time), 'เวลานัดไม่ถูกต้อง');
         const taskId = `T-${oid}`;
         M.push({ tab: 'tasks', op: 'append', row: { taskId, customerId: p.customerId, type: 'ติดตาม', title: str(p.title) || 'ติดตาม', dueAt: dueStamp(p.plannedAt), status: 'open', note: str(p.note), owner: by, updatedAt: ts, data: JSON.stringify({ time, _lastOpId: oid }), opId: oid, createdAt: ts, completedAt: '' } });
         M.push(act('ติดตาม', p.customerId, { refType: 'task', refId: taskId, note: str(p.note), suffix: '' }));
@@ -74,6 +76,41 @@ export function expandOp(op, ctx) {
       M.push({
         tab: 'activities', op: 'update', key: { col: 'activityId', val: id }, patch, mustExist: true, log: true,
         match: { customerId: str(p.customerId), type: 'โน้ต' },
+      });
+      dedupe.tab = 'changes'; dedupe.id = oid;
+      return { mutations: M, dedupe, result: {} };
+    }
+    case 'visit.update':
+    case 'task.update': {
+      const task = op.type === 'task.update';
+      const key = task ? 'taskId' : 'visitId';
+      const id = str(p[key]), customerId = str(p.customerId);
+      const from = str(p.from);
+      need(id && customerId, 'ต้องระบุบันทึกและลูกค้า');
+      need(!/^(?:cancelled|canceled)$/i.test(from), 'รายการนี้ถูกยกเลิกแล้ว');
+      const patch = { updatedAt: ts };
+      let mergeData;
+      if (p.remove) {
+        patch.status = task ? 'cancelled' : 'CANCELLED';
+      } else {
+        patch.note = str(p.note).trim();
+        if (p.date !== undefined) {
+          const date = str(p.date), time = str(p.time);
+          need(isDate(date), 'วันที่นัดไม่ถูกต้อง');
+          need(!time || timeOfDay.test(time), 'เวลานัดไม่ถูกต้อง');
+          if (task) {
+            need(from.toLowerCase() === 'open', 'แก้วันนัดได้เฉพาะงานที่ยังค้าง');
+            patch.dueAt = dueStamp(date);
+            mergeData = { time };
+          } else {
+            need(from.toLowerCase() === 'planned', 'แก้วันนัดได้เฉพาะรายการนัดหมาย');
+            patch.plannedAt = dueStamp(date);
+          }
+        }
+      }
+      M.push({
+        tab: task ? 'tasks' : 'visits', op: 'update', key: { col: key, val: id }, patch, mergeData, mustExist: true, log: true,
+        match: { customerId, status: from },
       });
       dedupe.tab = 'changes'; dedupe.id = oid;
       return { mutations: M, dedupe, result: {} };
@@ -279,7 +316,14 @@ export function applyMutationsLocal(raw, mutations) {
       case 'append': rows.push({ ...m.row }); break;
       case 'appendUnique': for (const r of m.rows) if (!rows.some(x => x[m.col] === r[m.col])) rows.push({ ...r }); break;
       case 'appendUniqueComposite': for (const r of m.rows) if (!rows.some(x => m.cols.every(c => x[c] === r[c]))) rows.push({ ...r }); break;
-      case 'update': { const r = rows.find(x => x[m.key.col] === String(m.key.val)); if (r && Object.entries(m.match || {}).every(([k, v]) => r[k] === v)) Object.assign(r, m.patch); break; }
+      case 'update': {
+        const row = rows.find(x => x[m.key.col] === String(m.key.val));
+        if (row && Object.entries(m.match || {}).every(([key, value]) => row[key] === value)) {
+          Object.assign(row, m.patch);
+          if (m.mergeData) row.data = JSON.stringify({ ...parseJson(row.data), ...m.mergeData });
+        }
+        break;
+      }
       case 'updateWhere': for (const r of rows) if (String(r[m.key.col] || '').includes(m.key.contains)) Object.assign(r, m.patch); break;
       case 'updateAll': for (const r of rows) if (r[m.col] === m.from) r[m.col] = m.to; break;
       case 'upsert': { const r = rows.find(x => x[m.key.col] === String(m.key.val)); if (r) { const keep = {}; for (const k of m.keepOnUpdate || []) keep[k] = r[k]; Object.assign(r, m.row, keep); } else rows.push({ ...m.row }); break; }

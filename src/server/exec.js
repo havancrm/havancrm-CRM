@@ -95,11 +95,12 @@ export async function execOp(store, op, ctx) {
         if (!n) break;
         const before = await store.getRow(m.tab, n);
         if (m.match && Object.entries(m.match).some(([key, value]) => before[key] !== value)) {
-          throw new OpError('บันทึกนี้ถูกเปลี่ยนหรือไม่ตรงกับลูกค้าที่เลือก', 'target_mismatch');
+          throw new OpError('รายการนี้ถูกเปลี่ยนหรือไม่ตรงกับลูกค้าที่เลือก', 'target_mismatch');
         }
-        const b = {}; for (const k of Object.keys(m.patch)) b[k] = before[k];
-        await store.updateRow(m.tab, n, m.patch);
-        if (m.log) addLog(m.tab, m.key.val, 'update', b, m.patch);
+        const patch = m.mergeData ? { ...m.patch, data: JSON.stringify({ ...parseJson(before.data), ...m.mergeData }) } : m.patch;
+        const snapshot = Object.fromEntries(Object.keys(patch).map(key => [key, before[key]]));
+        await store.updateRow(m.tab, n, patch);
+        if (m.log) addLog(m.tab, m.key.val, 'update', snapshot, patch);
         break;
       }
       case 'updateWhere': {

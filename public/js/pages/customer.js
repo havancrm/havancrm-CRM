@@ -148,8 +148,8 @@ function history(m, c) {
 
 function visitsTab(m, c) {
   const ev = [];
-  for (const v of m.visitsByCust.get(c.id) || []) ev.push({ k: D.visitPlanned(v) ? 'planned' : 'visit', t: v.at || v.plannedAt, v });
-  for (const t of m.tasksByCust.get(c.id) || []) ev.push({ k: String(t.status).toLowerCase() === 'open' ? 'task' : 'taskdone', t: t.completedAt || t.dueAt, v: t });
+  for (const v of (m.visitsByCust.get(c.id) || []).filter(v => !D.recordCancelled(v))) ev.push({ k: D.visitPlanned(v) ? 'planned' : 'visit', t: v.at || v.plannedAt, v });
+  for (const t of (m.tasksByCust.get(c.id) || []).filter(t => !D.recordCancelled(t))) ev.push({ k: String(t.status).toLowerCase() === 'open' ? 'task' : 'taskdone', t: t.completedAt || t.dueAt, v: t });
   const visitIds = new Set((m.visitsByCust.get(c.id) || []).map(v => v.visitId));
   const taskIds = new Set((m.tasksByCust.get(c.id) || []).map(t => t.taskId));
   for (const a of m.activitiesByCust.get(c.id) || []) {
@@ -160,6 +160,7 @@ function visitsTab(m, c) {
   const badge = e => ({ visit: ['เข้าพบ', 'ok'], planned: ['นัดหมาย', 'warn'], task: ['ติดตาม', 'warn'], taskdone: ['ติดตามแล้ว', ''], act: [e.v.type, 'gray'] }[e.k]);
   const photos = (m.photosByCust.get(c.id) || []).length;
   const nVisits = ev.filter(e => e.k === 'visit').length, open = ev.filter(e => e.k === 'task' || e.k === 'planned').length;
+  const recordId = ({ k, v }) => k === 'act' ? (v.type === 'โน้ต' ? v.activityId : '') : v.taskId || v.visitId;
   const row = e => {
     const [t, cls] = badge(e), v = e.v;
     const time = D.parseJson(v.data).time;
@@ -167,8 +168,10 @@ function visitsTab(m, c) {
     const note = e.k === 'task' || e.k === 'taskdone' ? v.note || v.title : v.note;
     return `<div class="li" style="cursor:default;align-items:flex-start"><div class="grow"><div class="row"><span class="badge ${cls}">${esc(t)}</span><span class="xs faint">${when}</span></div>
       <div class="sm" style="margin-top:4px;white-space:pre-line">${esc(note || '—')}</div>${v.outcome ? `<div class="xs muted">ผล: ${esc(v.outcome)}</div>` : ''}${e.k === 'visit' && v.lat ? `<div class="xs faint">${icon('pin')} ${(+v.lat).toFixed(4)}, ${(+v.lng).toFixed(4)}</div>` : ''}</div>
-      ${e.k === 'act' && v.type === 'โน้ต' ? `<button class="btn ghost sm" data-edit-note="${esc(v.activityId)}">แก้ไข</button>` : ''}
-      ${e.k === 'task' ? `<button class="btn ghost sm" data-done="${esc(v.taskId)}">เสร็จแล้ว</button>` : ''}</div>`;
+      <div class="stack">
+        ${recordId(e) ? `<button class="btn ghost sm" data-edit-record="${esc(recordId(e))}">แก้ไข</button>` : ''}
+        ${e.k === 'task' ? `<button class="btn ghost sm" data-done="${esc(v.taskId)}">เสร็จแล้ว</button>` : ''}
+      </div></div>`;
   };
   const body = `<div class="row"><button class="btn grad grow" data-act="note2">${icon('plus')} บันทึกเข้าพบ / โน้ต / นัดหมาย</button></div>
     <div class="muted sm" style="margin-top:8px">เข้าพบ ${nVisits} ครั้ง · รูป ${photos} · งานติดตามค้าง ${open}</div>
@@ -177,22 +180,37 @@ function visitsTab(m, c) {
     body,
     after(root) {
       root.querySelector('[data-act="note2"]').onclick = () => visitSheet(c.id);
-      root.querySelectorAll('[data-edit-note]').forEach(button => {
-        button.onclick = () => editNote(c.id, ev.find(e => e.v.activityId === button.dataset.editNote).v);
+      root.querySelectorAll('[data-edit-record]').forEach(button => {
+        const record = ev.find(e => recordId(e) === button.dataset.editRecord);
+        button.onclick = () => editFieldRecord(c.id, record);
       });
       root.querySelectorAll('[data-done]').forEach(b => b.onclick = () => completeTaskSheet((m.tasksByCust.get(c.id) || []).find(t => t.taskId === b.dataset.done)));
     },
   };
 }
 
-function editNote(customerId, activity) {
-  const form = sheet(`<h3>แก้ไขโน้ต</h3><label class="field"><span>ข้อความ</span><textarea class="inp" rows="4">${esc(activity.note)}</textarea></label>
-    <div class="row"><button class="btn ghost" data-remove>ลบโน้ต</button><button class="btn grad grow" data-save>บันทึก</button></div>`);
+function editFieldRecord(customerId, { k, v }) {
+  const task = !!v.taskId;
+  const type = k === 'act' ? 'note.update' : task ? 'task.update' : 'visit.update';
+  const title = k === 'act' ? 'โน้ต' : task || k === 'planned' ? 'นัดหมาย' : 'บันทึกเข้าพบ';
+  const scheduled = k === 'task' || k === 'planned';
+  const dates = scheduled ? `<div class="row"><label class="field grow"><span>วันที่นัด</span><input class="inp" type="date" data-date value="${esc(D.dateOf(task ? v.dueAt : v.plannedAt))}"></label>
+    ${task ? `<label class="field grow"><span>เวลา</span><input class="inp" type="time" data-time value="${esc(D.parseJson(v.data).time || '')}"></label>` : ''}</div>` : '';
+  const form = sheet(`<h3>แก้ไข${title}</h3><div class="stack"><label class="field"><span>รายละเอียด</span><textarea class="inp" rows="4">${esc(v.note || '')}</textarea></label>${dates}
+    <div class="row"><button class="btn ghost" data-remove>ลบรายการ</button><button class="btn grad grow" data-save>บันทึก</button></div></div>`);
   const buttons = [...form.el.querySelectorAll('[data-save],[data-remove]')];
   const submit = async remove => {
     buttons.forEach(button => button.disabled = true);
+    const payload = { customerId, from: v.status || '', note: form.el.querySelector('textarea').value, remove };
+    if (k === 'act') payload.activityId = v.activityId;
+    else if (task) payload.taskId = v.taskId;
+    else payload.visitId = v.visitId;
+    if (scheduled && !remove) {
+      payload.date = form.el.querySelector('[data-date]').value;
+      payload.time = form.el.querySelector('[data-time]')?.value;
+    }
     try {
-      await enqueue('note.update', { customerId, activityId: activity.activityId, note: form.el.querySelector('textarea').value, remove });
+      await enqueue(type, payload);
       form.close();
       toast(remove ? 'บันทึกการลบแล้ว' : 'บันทึกการแก้ไขแล้ว');
     } catch (error) {
@@ -202,6 +220,6 @@ function editNote(customerId, activity) {
   };
   form.el.querySelector('[data-save]').onclick = () => submit(false);
   form.el.querySelector('[data-remove]').onclick = async () => {
-    if (await confirmBox('ลบโน้ตนี้จากประวัติของร้าน?', 'ลบโน้ต')) await submit(true);
+    if (await confirmBox(`ลบ${title}นี้จากประวัติของร้าน?`, 'ลบรายการ')) await submit(true);
   };
 }
