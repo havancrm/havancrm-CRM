@@ -7,7 +7,8 @@ const PERIODS = [['today', 'วันนี้'], ['7d', '7 วัน'], ['month
 
 export default function sales({ m, query }) {
   const p = PERIODS.some(x => x[0] === query.p) ? query.p : 'month';
-  const [from, to] = D.periodRange(p, m.today);
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(query.mo || query.q || '') ? (query.mo || query.q) : '';
+  const [from, to] = month ? [month + '-01', month + '-31'] : D.periodRange(p, m.today);
   const r = D.salesBetween(m, from, to);
   const view = ['month', 'clerk', 'cust', 'bills'].includes(query.v) ? query.v : 'month';
   const avg = r.billCount ? r.total / r.billCount : 0;
@@ -18,7 +19,7 @@ export default function sales({ m, query }) {
   const bills = [...r.bills].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.no < b.no ? 1 : -1));
   const kv = (t, v, go) => `<button class="card soft" ${go ? `data-v="${go}"` : 'disabled'} style="text-align:center;min-width:0;border:0;cursor:pointer"><div class="xs muted">${t}</div><div class="b num" style="font-size:16px">${v}</div></button>`;
   const html = `<div class="stack">
-    <div class="chips">${PERIODS.map(([k, t]) => `<button class="chip ${p === k ? 'on' : ''}" data-p="${k}">${t}</button>`).join('')}</div>
+    <div class="chips">${PERIODS.map(([k, t]) => `<button class="chip ${!month && p === k ? 'on' : ''}" data-p="${k}">${t}</button>`).join('')}</div>
     <div class="hero" style="margin:0;border-radius:14px"><div class="sm" style="opacity:.8">ยอดขายรวม ${from ? fmtDate(from) + ' – ' + fmtDate(to) : 'ทั้งหมด'}</div><div class="num" style="font-size:30px;font-weight:700">${D.money(r.total)} <span style="font-size:15px">฿</span></div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">${kv('จำนวนบิล', D.money(r.billCount), 'bills')}${kv('เฉลี่ย/บิล', D.money(avg), '')}${kv('ลูกค้า', custs.length, 'cust')}</div>
     <div class="xs faint">ยอดขายคำนวณจากผลรวมรายการในบิล (bill_items.amount) ของฐาน CRM เท่านั้น ไม่บวกภาษีเพิ่ม ถ้ายอดต่างจากระบบเดิมให้ยึดฐาน CRM</div>
@@ -28,7 +29,7 @@ export default function sales({ m, query }) {
   return {
     html, title: 'รายงานยอดขาย',
     after(root) {
-      const nav = patch => { const q = { p, v: view, ...patch }; location.hash = `#/sales?${new URLSearchParams(q)}`; };
+      const nav = patch => { const q = { p, v: view, ...(month && !patch.p ? { mo: month } : {}), ...patch }; location.hash = `#/sales?${new URLSearchParams(q)}`; };
       root.querySelectorAll('[data-p]').forEach(b => b.onclick = () => nav({ p: b.dataset.p }));
       root.querySelectorAll('[data-v]').forEach(b => b.onclick = () => nav({ v: b.dataset.v }));
       const box = root.querySelector('#sl'), inp = root.querySelector('#sq');
@@ -53,14 +54,8 @@ export default function sales({ m, query }) {
       inp?.addEventListener('input', debounce(draw));
       box.addEventListener('click', e => {
         const b = e.target.closest('[data-bill]'); if (b) openBill(m, b.dataset.bill);
-        const mo = e.target.closest('[data-mo]'); if (mo) { const [y, mm] = mo.dataset.mo.split('-'); location.hash = `#/sales?p=all&v=bills&q=${y}-${mm}`; }
+        const mo = e.target.closest('[data-mo]'); if (mo) { const [y, mm] = mo.dataset.mo.split('-'); location.hash = `#/sales?p=all&v=bills&mo=${y}-${mm}`; }
       });
-      if (query.q && inp) { inp.value = ''; } // month drill-down: show that month's bills
-      if (query.q && /^\d{4}-\d{2}$/.test(query.q) && view === 'bills') {
-        const rows = bills.filter(b => b.date.startsWith(query.q));
-        const row = b => `<div class="li" data-bill="${esc(b.no)}"><div class="grow"><div class="t ell">${esc(D.custName(m, b.customerId))}</div><div class="s">${esc(b.no)} · ${fmtDate(b.date)}</div></div><div class="r b num">${D.money(D.billTotal(m, b.no))}</div></div>`;
-        box.innerHTML = `<div class="sec"><span>${monthLabel(query.q)}</span><span class="faint xs">${rows.length} บิล · ${D.money(rows.reduce((s, b) => s + D.billTotal(m, b.no), 0))} ฿</span></div><div class="list">${pager(rows, row, { id: 'sm' })}</div>`; bindPager(box, rows, row, { id: 'sm' });
-      }
     },
   };
 }
