@@ -8,7 +8,7 @@ const PERIODS = [['today', 'วันนี้'], ['7d', '7 วัน'], ['month
 export default function sales({ m, query }) {
   const p = PERIODS.some(x => x[0] === query.p) ? query.p : 'month';
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(query.mo || query.q || '') ? (query.mo || query.q) : '';
-  const [from, to] = month ? [month + '-01', month + '-31'] : D.periodRange(p, m.today);
+  const [from, to] = month ? [month + '-01', D.dayStr(D.dayNum(`${month}-01`) + new Date(Date.UTC(+month.slice(0,4), +month.slice(5,7), 0)).getUTCDate() - 1)] : D.periodRange(p, m.today);
   const r = D.salesBetween(m, from, to);
   const view = ['month', 'clerk', 'cust', 'bills'].includes(query.v) ? query.v : 'month';
   const avg = r.billCount ? r.total / r.billCount : 0;
