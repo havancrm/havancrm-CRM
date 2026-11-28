@@ -27,12 +27,14 @@ export default function customer({ m, params, query }) {
     <div class="hdn">${esc(c.name)}</div>
     <div class="t" style="margin-top:3px">รหัส ${esc(c.id)}${c.type ? ' · ' + esc(c.type) : ''}</div>
     <div class="chips" style="margin-top:8px"><span class="pill ${st.status === 'current' ? 'p-grn' : st.status === 'closed' ? 'p-gry' : 'p-amb'}">${D.STATUS_TH[st.status]}</span>${D.isTempId(id) ? '<span class="pill p-amb">ยังไม่มีรหัสบัญชี</span>' : ''}${labels.map(l => `<a class="pill p-blu" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)}</a>`).join('')}</div>
-    <div class="g2 quick" style="margin-top:10px">
+    <div class="quick customer-quick" style="margin-top:10px">
+      <button class="btn line" data-act="note">${icon('pin')}บันทึก</button>
+      <button class="btn line" data-act="geo">${icon('camera')}รูป+พิกัด</button>
+      <a class="btn line" href="#/order/new?c=${encodeURIComponent(id)}">${icon('cart')}รับออเดอร์</a>
       ${phones.length ? `<button class="btn line" data-act="call">${icon('phone')}โทร</button>` : `<button class="btn line" disabled>${icon('phone')}โทร</button>`}
       ${navHref ? `<a class="btn line" href="${esc(navHref)}" target="_blank" rel="noopener">${icon('nav')}นำทาง</a>` : `<button class="btn line" disabled>${icon('nav')}นำทาง</button>`}
     </div></div>
-    <div class="tabs">${[['overview', 'ภาพรวม'], ['info', 'ข้อมูล'], ['history', 'ประวัติซื้อ'], ['visits', 'บันทึก']].map(([k, t]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
-  const foot = `<div class="act"><button class="btn" data-act="note">${icon('pin')}เข้าพบ / บันทึก</button><button class="btn line" data-act="geo">${icon('camera')}รูป+พิกัด</button><a class="btn line" href="#/order/new?c=${encodeURIComponent(id)}">${icon('cart')}ออเดอร์</a></div>`;
+    <div class="tabs">${[['overview', 'ภาพรวม'], ['info', 'ข้อมูล'], ['history', 'ประวัติซื้อ'], ['visits', 'เข้าพบ']].map(([k, t]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
 
   let body = '', after = () => {};
   if (tab === 'overview') ({ body, after } = overview(m, c, st, hasGps));
@@ -42,7 +44,7 @@ export default function customer({ m, params, query }) {
 
   return {
     title: c.name,
-    html: `${hero}${body}${foot}`,
+    html: `${hero}${body}`,
     after(root) {
       root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { history.replaceState(null, '', `#/c/${encodeURIComponent(id)}?tab=${b.dataset.tab}`); window.dispatchEvent(new HashChangeEvent('hashchange')); });
       root.querySelector('[data-act="note"]')?.addEventListener('click', () => visitSheet(id));
@@ -116,7 +118,7 @@ function history(m, c) {
       const draw = () => {
         const t = D.normText(inp.value);
         const rows = t ? bills.filter(b => b.no.includes(inp.value.trim()) || (m.itemsByBill.get(b.no) || []).some(i => D.normText(i.name).includes(t) || D.normText(i.code) === t)) : bills;
-        if (t) cnt.textContent = `พบ ${rows.length} บิล`;
+        cnt.textContent = t ? `พบ ${rows.length} บิล` : `${bills.length} บิล · รวม ${D.money(D.customerStats(m, c.id).total)} ฿`;
         list.innerHTML = rows.length ? pager(rows, rowHtml, { id: 'hb' }) : emptyMsg('ไม่พบบิล');
         bindPager(list, rows, rowHtml, { id: 'hb' });
       };
