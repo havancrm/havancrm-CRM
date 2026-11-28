@@ -161,3 +161,8 @@ input[type=checkbox],input[type=radio]{width:auto;min-height:0}
 /* definition lists used by settings / import summaries */
 dl.kv{display:grid;grid-template-columns:minmax(0,max-content) minmax(0,1fr);gap:6px 12px;margin:0;padding:0;border:0;min-height:0;background:none}
 dl.kv dt{color:var(--mu);font-size:var(--fs1)}dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere;font-weight:600}
+
+/* Customer 360: one compact action row; no sticky duplicate actions. */
+.customer-quick{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+.customer-quick .btn{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;min-width:0;min-height:50px;padding:5px 1px;font-size:var(--fs1);line-height:1.25;white-space:normal;text-align:center;overflow-wrap:anywhere}
+.customer-quick .btn svg.i{width:18px;height:18px}
