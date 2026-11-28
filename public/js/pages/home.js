@@ -10,9 +10,7 @@ export default function home({ m, query = {} }) {
   const sales = D.salesBetween(m, from, to);
   const sug = D.suggestions(m);
   const due = sug.today.length + sug.over.length + sug.late.length;
-  const labelCounts = new Map();
-  for (const c of m.customers) for (const label of new Set(D.custLabels(m, c.id))) labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
-  const labels = [...labelCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'th'));
+  const labels = D.customerLabelCounts(m);
   const html = `
     <a class="inv" href="#/sales"><div><div class="t">ยอดขายเดือนนี้</div><div class="f6 num">${D.money(sales.total)} ฿</div></div><div class="ta-r t">${sales.billCount} บิล ›</div></a>
     <div class="sr">${icon('search')}<input id="hs" type="search" value="${esc(query.q || '')}" placeholder="ค้นหา ร้าน รหัส เบอร์ ป้าย สินค้า บิล" autocomplete="off" enterkeyhint="search"></div>
@@ -31,7 +29,7 @@ export default function home({ m, query = {} }) {
     </div>
     <div class="c hlab"><div class="lh"><span>${icon('tag')} ป้ายกำกับ</span><span class="t">${labels.length} ป้าย</span></div>
       ${labels.length ? `<div class="lg">${labels.slice(0, 8).map(([l, n]) => `<button class="hlr" data-go="#/customers?label=${encodeURIComponent(l)}"><span>${esc(l)}</span><b>${n}</b></button>`).join('')}</div>` : '<div class="empty">ยังไม่มีป้ายกำกับ</div>'}
-      ${labels.length > 8 ? `<a class="lf" href="#/customers?labels=1">ดูป้ายกำกับทั้งหมด (${labels.length}) ›</a>` : ''}
+      ${labels.length ? `<a class="lf" href="#/customers?labels=1">ดูป้ายกำกับทั้งหมด (${labels.length}) ›</a>` : ''}
     </div>
     <a class="lk t" href="#/new" style="justify-content:center">รายงานลูกค้าใหม่ (ซื้อครั้งแรก/เพิ่มทะเบียน) ›</a>`;
   return {

@@ -12,9 +12,10 @@ export default function newcustomers({ m, query }) {
   const reg = m.customers.filter(c => D.isRecentlyRegistered(m, c)).sort((a, b) => (D.registeredAt(m, b.id) > D.registeredAt(m, a.id) ? 1 : -1));
   const rows = tab === 'first' ? first : reg;
   const both = new Set(first.map(c => c.id).filter(id => reg.some(c => c.id === id)));
+  const range = m.settings.newDays > 0 ? `ในช่วง ${m.settings.newDays} วันล่าสุด` : 'เดือนนี้';
   const html = `<div class="stack">
     <div class="seg"><button data-t="first" class="${tab === 'first' ? 'on' : ''}">ซื้อครั้งแรก ${first.length}</button><button data-t="reg" class="${tab === 'reg' ? 'on' : ''}">เพิ่มทะเบียน ${reg.length}</button></div>
-    <div class="muted sm">${tab === 'first' ? `ร้านที่ <b>ซื้อครั้งแรก</b> ภายใน ${m.settings.newDays} วัน (นับจากบิลจริง)` : `ร้านที่ <b>เพิ่งเพิ่มเข้าทะเบียน</b> ภายใน ${m.settings.newDays} วัน (ยังไม่ซื้อก็แสดง) · ${reg.filter(c => D.isTempId(c.id)).length} ร้านยังไม่มีรหัสบัญชี`}</div>
+    <div class="muted sm">${tab === 'first' ? `ร้านที่ <b>ซื้อครั้งแรก</b> ${range} (นับจากบิลจริง)` : `ร้านที่ <b>เพิ่งเพิ่มเข้าทะเบียน</b> ${range} (ยังไม่ซื้อก็แสดง) · ${reg.filter(c => D.isTempId(c.id)).length} ร้านยังไม่มีรหัสบัญชี`}</div>
     ${tab === 'reg' ? `<button class="btn grad block" id="addc">${icon('plus')} เพิ่มร้านใหม่</button>` : ''}
     <label class="search">${icon('search')}<input id="nq" type="search" placeholder="ค้นหาร้าน ชื่อ รหัส เบอร์" autocomplete="off"></label><div id="nl"></div></div>`;
   return {
@@ -30,8 +31,8 @@ export default function newcustomers({ m, query }) {
         return custRow(m, c, { extra, sub });
       };
       const draw = () => {
-        const t = D.normText(inp.value);
-        const r = t ? rows.filter(c => D.normText(c.name).includes(t) || c.id === inp.value.trim() || (D.digits(inp.value).length >= 3 && D.custPhones(m, c.id).some(p => D.digits(p).includes(D.digits(inp.value))))) : rows;
+        const ids = new Set(rows.map(c => c.id));
+        const r = D.normText(inp.value) ? D.searchCustomers(m, inp.value, Infinity).filter(c => ids.has(c.id)) : rows;
         box.innerHTML = r.length ? `<div class="list">${pager(r, row, { id: 'nc' })}</div>` : emptyMsg(tab === 'first' ? 'ไม่มีร้านที่ซื้อครั้งแรกในช่วงนี้' : 'ไม่มีร้านที่เพิ่งเพิ่มทะเบียน');
         bindPager(box, r, row, { id: 'nc' });
       };

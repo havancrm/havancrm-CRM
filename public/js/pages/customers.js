@@ -9,12 +9,7 @@ export default function customers({ m, query }) {
   const label = query.label || '', q = query.q || '';
   const f0 = query.f || 'all';
   const cnt = D.customerCounts(m);
-  const labelGroups = new Map();
-  for (const c of m.customers) for (const l of new Set(D.custLabels(m, c.id))) {
-    if (!labelGroups.has(l)) labelGroups.set(l, new Set());
-    labelGroups.get(l).add(c.id);
-  }
-  const allLabels = [...labelGroups].sort((a,b) => b[1].size-a[1].size || a[0].localeCompare(b[0],'th'));
+  const allLabels = query.labels === '1' ? D.customerLabelCounts(m) : [];
   const html = `<div class="stack">
     <div class="g4" id="kp">${FILTERS.slice(0, 4).map(([k, t]) => `<button class="kp ${f0 === k ? 'on' : ''}" data-f="${k}"><b>${cnt[k]}</b>${t}</button>`).join('')}</div>
     <div class="row"><div class="sr grow">${icon('search')}<input id="cq" type="search" value="${esc(q)}" placeholder="ค้นหาลูกค้า ชื่อ รหัส เบอร์ ป้ายกำกับ" autocomplete="off"></div><button class="btn sm" id="addc">${icon('plus')} ร้านใหม่</button></div>
@@ -40,7 +35,7 @@ export default function customers({ m, query }) {
       };
       const labelsList = root.querySelector('#labels-list'), lq = root.querySelector('#lq');
       if (labelsList && lq) {
-        const drawLabels = () => { const t = D.normText(lq.value); labelsList.innerHTML = allLabels.filter(([l]) => D.normText(l).includes(t)).map(([l,ids]) => `<a class="chip" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)} · ${ids.size}</a>`).join('') || emptyMsg('ไม่พบป้ายกำกับ'); };
+        const drawLabels = () => { const t = D.normText(lq.value); labelsList.innerHTML = allLabels.filter(([l]) => D.normText(l).includes(t)).map(([l,count]) => `<a class="chip" href="#/customers?label=${encodeURIComponent(l)}">${esc(l)} · ${count}</a>`).join('') || emptyMsg('ไม่พบป้ายกำกับ'); };
         lq.addEventListener('input', drawLabels); drawLabels();
       }
       draw();

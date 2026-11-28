@@ -1,9 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "crm",
+  "account_id": "23283e64a0ba58956dcd51b07ce19753",
   "main": "src/server/index.js",
   "compatibility_date": "2026-01-01",
   "workers_dev": true,
+  "preview_urls": true,
+  "keep_vars": true,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -12,7 +15,6 @@
   "vars": {
     "SPREADSHEET_ID": "1KbM5G_-O24NfRfiAX9eBcp9KBg_GjGXd7aUCKVdfkHY",
     "DATA_MODE": "sheets",
-    "AUTH_MODE": "google",
-    "GOOGLE_CLIENT_ID": ""
+    "AUTH_MODE": "google"
   }
 }

@@ -14,7 +14,7 @@ export function visitSheet(customerId, { kind = 'visit' } = {}) {
     <div class="seg" id="vk"><button data-k="visit">เข้าพบ</button><button data-k="note">โน้ต</button><button data-k="appointment">นัดหมาย</button></div>
     <label class="field"><span id="nl">รายละเอียด</span><textarea class="inp" id="vn" placeholder="เช่น คุยกับเจ้าของร้าน สินค้าที่สนใจ สิ่งที่ต้องติดตาม"></textarea></label>
     <label class="field" id="ow"><span>ผลการเข้าพบ</span><select class="inp" id="vo">${OUTCOMES.map(o => `<option>${esc(o)}</option>`).join('')}</select></label>
-    <label class="field hide" id="dw"><span>วันที่นัด</span><input class="inp" type="date" id="vd" min="${m.today}"></label>
+    <div class="row hide" id="dw"><label class="field grow"><span>วันที่นัด</span><input class="inp" type="date" id="vd" min="${m.today}"></label><label class="field grow"><span>เวลา (ถ้ามี)</span><input class="inp" type="time" id="vt"></label></div>
     <label class="row" id="gw"><input type="checkbox" id="vg" checked> <span>แนบพิกัด GPS ปัจจุบัน</span></label>
     <div class="xs muted" id="gs"></div>
     <div id="pw"><label class="btn line block" for="vp">${icon('camera')} ถ่าย/เลือกรูป (ไม่บังคับ)</label><input type="file" id="vp" accept="image/*" capture="environment" class="hide"><img id="pv" class="photo hide" style="margin-top:8px" alt="ตัวอย่างรูป"></div>
@@ -50,7 +50,7 @@ export function visitSheet(customerId, { kind = 'visit' } = {}) {
     const btn = q('#vs'); btn.disabled = true;
     try {
       const p = { customerId, kind: cur, note, outcome: q('#vo')?.value || '' };
-      if (cur === 'appointment') p.plannedAt = q('#vd').value;
+      if (cur === 'appointment') Object.assign(p, { plannedAt: q('#vd').value, time: q('#vt').value });
       else if (cur === 'visit' && q('#vg').checked && gps) Object.assign(p, { lat: gps.lat, lng: gps.lng, accuracy: gps.accuracy });
       const op = await enqueue('visit.log', p);
       if (photo && cur === 'visit') await enqueue('photo.add', { customerId, visitId: `V-${op.opId}`, photoType: 'visit', imageBase64: photo.base64, mime: photo.mime, ...(gps && q('#vg').checked ? { lat: gps.lat, lng: gps.lng } : {}) });

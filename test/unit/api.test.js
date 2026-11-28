@@ -251,3 +251,23 @@ test('all 18 tabs exist in the fixture store with exact headers', async () => {
     if (r) assert.deepEqual(r.values[0], SCHEMA[t]);
   }
 });
+
+test('marking as delivered updates only the order status and keeps the lines', async () => {
+  fresh();
+  const original = await raw();
+  const customerId = original.customers[0].id;
+  const no = '01019999';
+  const order = { no, customerId, status: D.ORDER_ST.pending };
+  const lines = [{ code: '4012', name: 'ทดสอบ', qty: 1, price: 75 }];
+  assert.equal((await ops({ type: 'order.save', opId: opId(), payload: { order, lines } })).body.results[0].status, 'ok');
+  const before = (await raw()).order_items.filter(row => row.orderNo === no);
+  const payload = { no, customerId, from: D.ORDER_ST.pending, status: D.ORDER_ST.delivered };
+  const change = { type: 'order.status', opId: opId(), payload };
+  const denied = await ops({ ...change, payload: { ...payload, customerId: 'different' } });
+  assert.equal(denied.body.results[0].code, 'target_mismatch');
+  assert.equal((await ops(change)).body.results[0].status, 'ok');
+  assert.equal((await ops(change)).body.results[0].status, 'duplicate');
+  const after = await raw();
+  assert.equal(after.orders.find(row => row.no === no).status, D.ORDER_ST.delivered);
+  assert.deepEqual(after.order_items.filter(row => row.orderNo === no), before);
+});

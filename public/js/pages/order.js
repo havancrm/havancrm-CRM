@@ -34,6 +34,7 @@ export default function order({ m, params, query }) {
   if (!cid) return { html: `<div class="empty">เลือกลูกค้าเพื่อเริ่มออเดอร์<br><button class="btn" id="pc" style="margin-top:10px">เลือกลูกค้า</button></div>`, title: 'รับออเดอร์', after: r => { r.querySelector('#pc').onclick = () => pickCustomerSheet(m, id => { location.hash = `#/order/new?c=${encodeURIComponent(id)}`; }); } };
   const c = m.custById.get(cid);
   if (!c && isNew) return { html: `<div class="banner bad">ไม่พบลูกค้า ${esc(cid)}</div>`, title: 'รับออเดอร์' };
+  const canEdit = !existing || [D.ORDER_ST.draft, D.ORDER_ST.pending].includes(existing.status);
   const cartKey = isNew ? `cart:new:${cid}` : `cart:edit:${key}`;
   let cart = load(cartKey);
   if (!cart) {
@@ -135,8 +136,9 @@ export default function order({ m, params, query }) {
       <div class="xs faint">ยอดรวม = จำนวน × ราคา ของแต่ละรายการ ระบบไม่บวกภาษีเพิ่ม</div>
       <label class="field"><span>เงื่อนไขชำระ</span><input class="inp" id="tm" value="${esc(cart.paymentTerm || '')}" list="terms"></label><datalist id="terms"><option value="เงินสด"><option value="เครดิต 30 วัน"><option value="เครดิต 15 วัน"></datalist>
       <label class="field"><span>หมายเหตุออเดอร์</span><textarea class="inp" id="nt">${esc(cart.note || '')}</textarea></label>
-      <div class="row"><button class="btn line grow" id="sd">บันทึกร่าง</button><button class="btn grad grow" id="sc">ยืนยันออเดอร์</button></div>
-      <div class="row"><button class="btn ghost grow" id="doc">${icon('report')} เอกสารส่งสินค้า</button>${existing ? `<button class="btn line" id="cx" style="color:var(--bad)">ยกเลิกออเดอร์</button>` : `<button class="btn line" id="clr" style="color:var(--bad)">ล้างตะกร้า</button>`}</div></div>`;
+      <div class="row"><button class="btn line grow" id="sd" ${canEdit && existing?.status !== D.ORDER_ST.pending ? '' : 'disabled'}>บันทึกร่าง</button><button class="btn grad grow" id="sc" ${canEdit ? '' : 'disabled'}>ยืนยันออเดอร์</button></div>
+      ${existing?.status === D.ORDER_ST.pending ? '<button class="btn line block" id="ship">บันทึกว่าส่งแล้ว</button>' : ''}
+      <div class="row"><button class="btn ghost grow" id="doc">${icon('report')} เอกสารส่งสินค้า</button>${existing ? ([D.ORDER_ST.draft, D.ORDER_ST.pending].includes(existing.status) ? '<button class="btn line" id="cx" style="color:var(--bad)">ยกเลิกออเดอร์</button>' : '') : `<button class="btn line" id="clr" style="color:var(--bad)">ล้างตะกร้า</button>`}</div></div>`;
   }
   function cartMount(root) {
     const list = root.querySelector('#cl');
@@ -156,24 +158,46 @@ export default function order({ m, params, query }) {
     root.querySelector('#tm').oninput = sync; root.querySelector('#nt').oninput = sync;
 
     const build = status => ({ order: { no: cart.no, customerId: cid, date: existing?.date || m.today, paymentTerm: cart.paymentTerm, vatMode: cart.vatMode || 'NONE', status, note: cart.note, billNo: existing?.billNo || '', customerNameOverride: existing?.customerNameOverride || '' }, lines: cart.lines.filter(l => D.num(l.qty) > 0) });
+    let saving = false;
     const save = async status => {
-      sync();
-      const p = build(status);
-      if (status === D.ORDER_ST.pending && !p.lines.length) return toast('ยังไม่มีสินค้าในตะกร้า');
-      const zero = p.lines.filter(l => D.num(l.price) === 0);
-      if (status === D.ORDER_ST.pending && zero.length && !(await confirmBox(`มี ${zero.length} รายการราคา 0 บาท (แถม/ยังไม่กรอกราคา) ยืนยันต่อหรือไม่?`))) return;
-      if (!cart.no) { cart.no = D.newOrderNo(S.model.orders); persist(); p.order.no = cart.no; }
+      if (saving || !canEdit) return;
+      saving = true;
       try {
+        sync();
+        const p = build(status);
+        if (status === D.ORDER_ST.pending && !p.lines.length) return toast('ยังไม่มีสินค้าในตะกร้า');
+        const zero = p.lines.filter(l => D.num(l.price) === 0);
+        if (status === D.ORDER_ST.pending && zero.length && !(await confirmBox(`มี ${zero.length} รายการราคา 0 บาท (แถม/ยังไม่กรอกราคา) ยืนยันต่อหรือไม่?`))) return;
+        if (!cart.no) { cart.no = D.newOrderNo(S.model.orders); persist(); p.order.no = cart.no; }
         await enqueue('order.save', p);
         localStorage.removeItem(cartKey);
         if (status === D.ORDER_ST.pending) { docSheet(p.order, p.lines, () => { location.hash = '#/orders'; }); toast('ยืนยันออเดอร์แล้ว'); }
-        else { toast(status === D.ORDER_ST.cancelled ? 'ยกเลิกออเดอร์แล้ว' : 'บันทึกร่างแล้ว'); location.hash = '#/orders'; }
-      } catch (er) { toast(er.message); }
+        else { toast('บันทึกร่างแล้ว'); location.hash = '#/orders'; }
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        saving = false;
+      }
     };
     root.querySelector('#sd').onclick = () => save(D.ORDER_ST.draft);
     root.querySelector('#sc').onclick = () => save(D.ORDER_ST.pending);
     root.querySelector('#doc').onclick = () => { sync(); docSheet({ ...build(cart.status || D.ORDER_ST.draft).order, no: cart.no || '(ยังไม่บันทึก)' }, build(D.ORDER_ST.draft).lines); };
-    root.querySelector('#cx')?.addEventListener('click', async () => { if (await confirmBox('ยกเลิกออเดอร์นี้?', 'ยกเลิกออเดอร์')) save(D.ORDER_ST.cancelled); });
+    const changeStatus = async (button, status, question) => {
+      button.disabled = true;
+      try {
+        if (!await confirmBox(question, status)) return;
+        await enqueue('order.status', { no: existing.no, customerId: cid, from: existing.status, status });
+        localStorage.removeItem(cartKey);
+        toast(`บันทึกสถานะ “${status}” แล้ว`);
+        location.hash = '#/orders';
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    };
+    root.querySelector('#ship')?.addEventListener('click', e => changeStatus(e.currentTarget, D.ORDER_ST.delivered, 'บันทึกว่าออเดอร์นี้ส่งแล้ว?'));
+    root.querySelector('#cx')?.addEventListener('click', e => changeStatus(e.currentTarget, D.ORDER_ST.cancelled, 'ยกเลิกออเดอร์นี้?'));
     root.querySelector('#clr')?.addEventListener('click', async () => { if (await confirmBox('ล้างตะกร้าทั้งหมด?', 'ล้าง')) { cart.lines = []; persist(); drawLines(); upd(); } });
   }
   function docSheet(o, lines, onClose) {

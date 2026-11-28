@@ -11,7 +11,7 @@ const adminOnly = () => (S.user?.isAdmin ? '' : `<div class="banner">ฟัง�
 
 export default function settings(ctx) {
   const sub = ctx.params[0];
-  const page = { cycle, labels, import: importPage, quality, imports, codes, sync }[sub];
+  const page = { cycle, labels, import: importPage, quality, imports, codes, changes, sync }[sub];
   if (sub && !page) return { html: `<div class="empty">ไม่พบหน้านี้</div>` };
   return page ? page(ctx) : index(ctx);
 }
@@ -23,11 +23,12 @@ function index({ m }) {
     title: 'ตั้งค่า',
     html: `<div class="stack"><div class="card soft"><div class="b">${esc(S.user?.email || '')}</div><div class="xs muted">สิทธิ์: ${esc(S.user?.role || '-')}${S.user?.isAdmin ? ' (ผู้ดูแล)' : ''} · เวอร์ชัน ${esc(VERSION)}</div></div>
     <div class="list">
-      ${row('cycle', 'clock', 'รอบซื้อ / เกณฑ์ลูกค้าห่างหาย', `ห่างหาย > ${m.settings.lateDays} วัน · เข้าพบทุก ${m.settings.visitDef} วัน`)}
+      ${row('cycle', 'clock', 'รอบซื้อ / เกณฑ์ลูกค้าห่างหาย', `ห่างหาย > ${m.settings.dormDays} วัน · รอบปกติ ${m.settings.visitDef} วัน`)}
       ${row('labels', 'tag', 'ป้ายกำกับ', 'จัดการป้ายกำกับลูกค้า')}
       ${row('import', 'import', 'นำเข้า TTX', 'นำเข้าบิลจากไฟล์ (ผู้ดูแล)')}
       ${row('quality', 'shield', 'ตรวจคุณภาพข้อมูล', q ? `พบ ${q} รายการที่ควรตรวจ` : 'ไม่พบปัญหาสำคัญ')}
       ${row('imports', 'report', 'ตรวจประวัติการนำเข้า', 'รอบนำเข้าและรายการรอตรวจ')}
+      ${S.user?.isAdmin ? row('changes', 'clock', 'ประวัติการเปลี่ยนแปลง', 'ค้นหาการแก้ไขและการบันทึกข้อมูล') : ''}
       ${row('codes', 'warn', 'ตรวจรหัส/ชื่อสินค้าที่ไม่ตรงทะเบียน', 'เฉพาะแสดงรายการ ไม่ตัดสินว่าผิด')}
       ${row('sync', 'refresh', 'ซิงก์ และบัญชี', pendingCount() ? `รอส่ง ${pendingCount()} รายการ` : 'ข้อมูลล่าสุด')}
     </div></div>`,
@@ -36,7 +37,7 @@ function index({ m }) {
 
 // ---------------- cycle settings ----------------
 function cycle({ m }) {
-  const OLD = 'ค่าเดิมของ aCRM (แถว rules ในแท็บ systemSettings)', NEW = 'ค่าตั้งต้นของ CRM ใหม่ — ไม่มีในฐาน aCRM เดิม ยังไม่ได้ยืนยัน ปรับได้';
+  const OLD = 'ค่าเดิมของ aCRM (แถว rules ในแท็บ systemSettings)', NEW = 'ใส่ 0 เพื่อแสดงลูกค้าใหม่ในเดือนปัจจุบัน';
   const f = [['dormDays', 'ลูกค้าห่างหาย เมื่อไม่ซื้อเกิน (วัน)', `ปัจจุบัน = ซื้อภายในกี่วัน · ${OLD}`], ['lateDays', 'เกินรอบนาน เมื่อเลยรอบเกิน (วัน)', OLD], ['visitDef', 'รอบเข้าพบ = บิลล่าสุด + (วัน)', `ค่ามาตรฐานของ aCRM · ${OLD}`], ['nearDays', 'แจ้ง “ใกล้ถึงรอบ” ล่วงหน้า (วัน)', OLD], ['newDays', 'ลูกค้าใหม่ = ภายใน (วัน)', NEW]];
   return {
     title: 'รอบซื้อ / ลูกค้าห่างหาย',
@@ -56,8 +57,7 @@ function cycle({ m }) {
 
 // ---------------- labels ----------------
 function labels({ m }) {
-  const cnt = new Map(); for (const rows of m.labels.values()) for (const r of rows) if (r.label) cnt.set(r.label, (cnt.get(r.label) || 0) + 1);
-  const rows = [...cnt.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'th'));
+  const rows = D.customerLabelCounts(m);
   return {
     title: 'ป้ายกำกับ',
     html: `<div class="stack">${adminOnly()}<div class="muted sm">ใช้ป้ายกำกับแทนชื่อเรียกพิเศษของลูกค้า · ${rows.length} ป้าย · เพิ่ม/ลบป้ายของแต่ละร้านได้ที่หน้าข้อมูลลูกค้า (แก้ไข)</div>
@@ -246,6 +246,34 @@ async function runChunks(out, pr, batch, chunks, btn, extraOps = []) {
   } catch (er) { pr.innerHTML = `<span style="color:var(--bad)">หยุดที่ผิดพลาด: ${esc(er.message)} (รายการที่นำเข้าไปแล้วไม่ซ้ำเมื่อลองใหม่)</span>`; btn.disabled = false; }
 }
 
+async function changes() {
+  if (!S.user?.isAdmin) return { title: 'ประวัติการเปลี่ยนแปลง', html: adminOnly() };
+  let rows;
+  try {
+    const result = await api('/api/tab/changes');
+    rows = rowsToObjects(result.valueRanges[0].values).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  } catch (error) {
+    return { title: 'ประวัติการเปลี่ยนแปลง', html: `<div class="banner bad">${esc(error.message)}</div>` };
+  }
+  const row = change => `<details class="card"><summary>${esc(change.action)} · ${esc(change.entity)} ${esc(change.id)} <small class="muted">${fmtDateTime(change.at)}</small></summary>
+    <div class="sm muted">${esc(change.user)}</div><dl class="kv"><dt>ก่อนแก้</dt><dd>${esc(change.before || '—')}</dd><dt>หลังแก้</dt><dd>${esc(change.after || '—')}</dd></dl></details>`;
+  return {
+    title: 'ประวัติการเปลี่ยนแปลง',
+    html: `<label class="search">${icon('search')}<input type="search" id="changes-search" placeholder="ค้นหารหัส รายการ ผู้บันทึก" autocomplete="off"></label><div class="stack" id="changes-list"></div>`,
+    after(root) {
+      const box = root.querySelector('#changes-list'), input = root.querySelector('#changes-search');
+      const draw = () => {
+        const query = D.normText(input.value);
+        const matches = rows.filter(r => !query || D.normText([r.entity, r.id, r.action, r.user].join(' ')).includes(query));
+        box.innerHTML = matches.length ? pager(matches, row, { id: 'changes' }) : emptyMsg('ไม่พบรายการ');
+        bindPager(box, matches, row, { id: 'changes' });
+      };
+      input.addEventListener('input', debounce(draw));
+      draw();
+    },
+  };
+}
+
 // ---------------- sync / account ----------------
 function sync({ m }) {
   const q = S.queue;
@@ -261,8 +289,8 @@ function sync({ m }) {
       <button class="btn line block" id="cc">ล้างแคชในเครื่อง (งานที่รอส่งไม่หาย)</button>
       <button class="btn line block" id="lo" style="color:var(--bad)">ออกจากระบบ</button></div>`,
     after(root) {
-      root.querySelector('#sn').onclick = async e => { e.target.disabled = true; try { await flush(); await refresh(); toast('ซิงก์แล้ว'); } catch (er) { toast(er.message); } e.target.disabled = false; };
-      root.querySelector('#rt')?.addEventListener('click', () => retryFailed().then(() => toast('ส่งอีกครั้งแล้ว')));
+      root.querySelector('#sn').onclick = async e => { e.target.disabled = true; try { await flush(); await refresh(); toast(S.queue.length ? `ยังมีงานค้าง ${S.queue.length} รายการ` : S.online ? 'ซิงก์แล้ว' : 'เชื่อมต่อเพื่อซิงก์อีกครั้ง'); } catch (er) { toast(er.message); } e.target.disabled = false; };
+      root.querySelector('#rt')?.addEventListener('click', () => retryFailed().then(() => toast(S.queue.length ? `ยังมีงานค้าง ${S.queue.length} รายการ` : 'ส่งงานแล้ว')).catch(error => toast(error.message)));
       root.addEventListener('click', async e => { const d = e.target.closest('[data-dis]'); if (d && await confirmBox('ทิ้งงานนี้? ข้อมูลที่ยังไม่ได้ส่งจะหายไป', 'ทิ้ง')) { await discardOp(d.dataset.dis); location.reload(); } });
       root.querySelector('#dg')?.addEventListener('click', async () => {
         const box = root.querySelector('#dgo'); box.innerHTML = '<div class="empty">กำลังตรวจ…</div>';
@@ -271,7 +299,7 @@ function sync({ m }) {
           box.innerHTML = `<div class="banner ${r.ok ? 'ok' : 'bad'}" style="margin-top:8px">${r.ok ? `ครบ ${r.tabs} แท็บ / ${r.expectedColumns} คอลัมน์ตามโครงสร้าง` : 'พบแท็บที่ไม่ตรงโครงสร้าง'}</div><div class="list">${r.checks.map(c => `<div class="li" style="cursor:default"><div class="grow">${esc(c.tab)}</div>${c.ok ? '<span class="badge ok">ตรง</span>' : `<span class="badge bad">ขาด ${esc(c.missing.join(','))}</span>`}${c.extra.length ? `<span class="badge gray">เพิ่ม ${esc(c.extra.join(','))}</span>` : ''}</div>`).join('')}</div>`;
         } catch (er) { box.innerHTML = `<div class="banner bad">${esc(er.message)}</div>`; }
       });
-      root.querySelector('#cc').onclick = async () => { await clearCache(); if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k); toast('ล้างแคชแล้ว'); setTimeout(() => location.reload(), 600); };
+      root.querySelector('#cc').onclick = async () => { await clearCache(); toast('ล้างแคชแล้ว'); setTimeout(() => location.reload(), 600); };
       root.querySelector('#lo').onclick = async () => { await logout(); location.reload(); };
     },
   };

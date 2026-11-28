@@ -8,7 +8,7 @@ import { buildFixtures } from '../../src/server/fixtures.js';
 const Q = s => `"${s}"`;
 const BILLS = [
   Q('หจก.ทดสอบ ( สำนักงานใหญ่ )'),
-  `${Q('รายงานการขาย  แสดงรายละเอียดรายบิล')}\t${Q('พนักงานขาย :')}\t1`,
+  `${Q('รายงานการขาย  แสดงรายละเอียดรายบิล')}\t${Q('พนักงานขาย :')}\t53`,
   ['ใบส่งของ', 'วันที่ ', 'รายการ', 'เงื่อนไข/พนักงาน', 'จำนวน', 'หน่วยละ', 'จำนวนเงิน'].map(Q).join('\t'), '', '',
   `900001\t${Q('02/01/2567')}\t${Q('57900')}\t${Q('น. ร้านทดสอบ')}\t${Q('')}\t440.00`, `${Q('โทร. 081-111-2222 คุณ เอ')}\t${Q('เงินสด/ฝน')}`, '',
   `${Q('9617')}\t${Q('โลชั่น 3,200 ml.')}\t2.00\t220.00\t440.00`,
@@ -88,4 +88,23 @@ test('customers report: parse, map, existing never modified, new ones added, tem
   const c = a.fresh[0];
   assert.equal(c.customer.id, '88001'); assert.equal(c.customer.name, 'ส. ร้านใหม่ ( ลาดพร้าว )'); assert.equal(c.customer.address, 'ซอย 5 ไป 50 ม. ใกล้ตลาด  กรุงเทพมหานคร');
   assert.deepEqual(c.phones, ['081-984-3833', '02-111-2222']); assert.equal(c.customer.contactName, 'คุณ เอ๋'); assert.equal(c.customer.paymentTerm, 'เงินสด'); assert.equal(c.customer.billClerk, 'ฝน');
+});
+
+test('customer directory Code header preserves the real name, address, type and phone', () => {
+  const text = '"Code :"\t"99881"\t" Group 53"\t" Zone : 0"\r\n"ร้านทดสอบ"\t"ประเภท : สปา"\r\n"ถนนทดสอบ"\r\n"โทร. 081-111-2222 คุณ เอ"';
+  assert.equal(T.detectKind(text), 'customers');
+  const parsed = T.parseCustomers(text);
+  assert.equal(parsed.bad.length, 0);
+  const [row] = parsed.customers;
+  const { customer, phones } = T.toCrmCustomer(row);
+  assert.deepEqual([customer.id, customer.name, customer.type, customer.address], ['99881', 'ร้านทดสอบ', 'สปา', 'ถนนทดสอบ']);
+  assert.deepEqual(phones, ['081-111-2222']);
+});
+
+test('bill numbers repeated in the same file are held for review', () => {
+  const model = D.buildModel({});
+  const parsed = T.parseBills(BILLS.replace('900002', '900001'));
+  const result = T.analyzeBills(model, parsed);
+  assert.equal(result.newBills.length, 2);
+  assert.ok(result.flags.some(f => f.issueCode === 'DUP_IN_FILE' && f.sourceKey === '900001'));
 });

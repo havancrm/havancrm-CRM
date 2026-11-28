@@ -65,13 +65,17 @@ export function splitTermClerk(s) {
 
 export function parseBills(text) {
   const rows = tokenize(text);
-  const bills = []; const bad = []; let cur = null, expectSub = false, footer = null;
+  const bills = []; const bad = []; let cur = null, expectSub = false, footer = null, sellerCode = '';
   for (let i = 0; i < rows.length; i++) {
     const { f, q } = rows[i];
     if (f.every(x => x === '')) continue;
+    if (f.length === 3 && /^พนักงานขาย\s*:/.test(f[1])) {
+      sellerCode = f[2].trim().match(/^\d+/)?.[0] || '';
+      continue;
+    }
     // header: unquoted bill no, quoted dd/mm/yyyy
     if (f.length >= 6 && !q[0] && /^\d+$/.test(f[0]) && beDate(f[1])) {
-      cur = { no: f[0], date: beDate(f[1]), customerId: f[2], customerName: f[3].replace(/\s+/g, ' ').trim(), headerAmount: money(f[5]), items: [], phone: '', termRaw: '', row: i + 1 };
+      cur = { no: f[0], date: beDate(f[1]), customerId: f[2], customerName: f[3].replace(/\s+/g, ' ').trim(), headerAmount: money(f[5]), items: [], phone: '', termRaw: '', sellerCode, row: i + 1 };
       bills.push(cur); expectSub = true; continue;
     }
     if (f[0] === 'รวมทั้งสิ้น') { footer = { page: money(f[1]), grand: money(f[2]) }; continue; }
@@ -81,7 +85,6 @@ export function parseBills(text) {
     }
     if (f.length >= 3 && f[0] === 'ใบส่งของ') continue;             // column titles
     if (i < 4 && f.length <= 3) continue;                            // report title lines
-    if (f.length === 3 && f[1] === 'พนักงานขาย :') continue;
     bad.push({ row: i + 1, text: f.join(' | ').slice(0, 120) });
   }
   return { kind: 'bills', bills, footer, bad, rowsRead: rows.length };
@@ -97,14 +100,43 @@ export function toCrmBill(b, { source, salesperson = 'อาร์ต' } = {}) {
   const vat = b.items.filter(isVatLine);
   const items = b.items.filter(it => !isVatLine(it));
   return {
-    bill: { no: b.no, date: b.date, customerId: b.customerId, customerNameOverride: '', paymentTerm: term, openedBy: clerk, salesperson, vatMode: vat.length ? 'VAT_OUT' : items.some(i => i.code === '0014') ? 'VAT_IN' : 'NONE', source },
+    bill: { no: b.no, date: b.date, customerId: b.customerId, customerNameOverride: '', paymentTerm: term, openedBy: clerk, salesperson: b.sellerCode === '53' ? 'อาร์ต' : b.sellerCode || salesperson, vatMode: vat.length ? 'VAT_OUT' : items.some(i => i.code === '0014') ? 'VAT_IN' : 'NONE', source },
     items: items.map((it, i) => ({ billNo: b.no, line: String(i + 1), code: it.code, name: it.name, qty: String(it.qty), price: String(it.price), amount: String(it.amount) })),
     vatAmount: vat.reduce((s, x) => s + x.amount, 0),
   };
 }
 
+const customerCodeHeader = /^Code\s*:/i;
+function parseCustomerDirectory(rows) {
+  const customers = [], bad = [];
+  let customer;
+  for (const [index, { f }] of rows.entries()) {
+    const first = f[0].trim();
+    if (customerCodeHeader.test(first)) {
+      customer = { id: (f[1] || '').trim(), name: '', type: '', addr: [], phone: '', directory: true, row: index + 1 };
+      customers.push(customer);
+    } else if (first && customer) {
+      if (!customer.name) {
+        customer.name = first;
+        customer.type = (f[1] || '').trim().match(/^ประเภท\s*:\s*(.+)$/)?.[1] || '';
+      } else if (/^(?:โทร|TEL)/i.test(first)) {
+        customer.phone = [customer.phone, first].filter(Boolean).join(' ');
+      } else {
+        customer.addr.push(first);
+      }
+    }
+  }
+  const valid = customers.filter(c => {
+    if (c.id && c.name) return true;
+    bad.push({ row: c.row, text: 'ไม่มีรหัสลูกค้าหรือชื่อร้าน' });
+    return false;
+  });
+  return { kind: 'customers', customers: valid, bad, rowsRead: rows.length };
+}
+
 export function parseCustomers(text) {
   const rows = tokenize(text);
+  if (customerCodeHeader.test((rows.find(r => r.f.some(x => x.trim()))?.f[0] || '').trim())) return parseCustomerDirectory(rows);
   const out = []; const bad = []; let cur = null, mode = '';
   for (let i = 0; i < rows.length; i++) {
     const { f, q } = rows[i];
@@ -134,7 +166,7 @@ export function splitPhone(s) {
 export function detectKind(text) {
   const head = text.slice(0, 600);
   if (/รายงานการขาย\s+แสดงรายละเอียดรายบิล/.test(head)) return 'bills';
-  if (/รายงานการขายย้อนหลัง|รหัสลูกค้า/.test(head)) return 'customers';
+  if (/รายงานการขายย้อนหลัง|รหัสลูกค้า/.test(head) || /^\s*"?Code\s*:/i.test(head)) return 'customers';
   return '';
 }
 
@@ -147,7 +179,13 @@ export async function sha256Hex(buf) {
 export function analyzeBills(m, parsed, { fileName = '', salesperson = 'อาร์ต' } = {}) {
   const flags = [], newBills = [], same = [], diff = [];
   const unknownCust = new Set(), codes = new Map();
+  const occurrences = new Map();
+  for (const bill of parsed.bills) occurrences.set(bill.no, (occurrences.get(bill.no) || 0) + 1);
+  for (const [no, count] of occurrences) if (count > 1) {
+    flags.push({ entityType: 'bill', sourceKey: no, issueCode: 'DUP_IN_FILE', severity: 'medium', sourceValue: String(count), suggestedAction: 'ตรวจเลขบิลซ้ำในไฟล์ก่อนนำเข้า' });
+  }
   for (const b of parsed.bills) {
+    if (occurrences.get(b.no) > 1) continue;
     const c = toCrmBill(b, { source: fileName, salesperson });
     const itemsTotal = c.items.reduce((s, i) => s + num(i.amount), 0);
     const hdr = b.headerAmount, expectHdr = itemsTotal + c.vatAmount;
@@ -172,7 +210,7 @@ export function toCrmCustomer(c) {
   const { term, clerk } = splitTermClerk(c.termRaw);
   const { phones, contact } = splitPhone(c.phone);
   return {
-    customer: { id: c.id, name: c.name, address: c.addr.map(s => s.trim()).filter(Boolean).join(' '), contactName: contact, paymentTerm: term, billClerk: clerk, activeFlag: '' },
+    customer: { id: c.id, name: c.name, ...(c.type ? { type: c.type } : {}), address: c.addr.map(s => s.trim()).filter(Boolean).join(' '), contactName: contact, paymentTerm: c.directory ? '' : term, billClerk: clerk, activeFlag: '' },
     phones,
   };
 }

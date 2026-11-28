@@ -104,7 +104,7 @@ export class SheetsStore {
     const token = await googleAccessToken(this.env, SCOPE);
     for (let attempt = 0; ; attempt++) {
       const r = await fetch(`${base}/${this.id}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) } });
-      if ((r.status === 429 || r.status >= 500) && attempt < 3) { await new Promise(s => setTimeout(s, 400 * 2 ** attempt)); continue; }
+      if ((r.status === 429 || (!init.method && r.status >= 500)) && attempt < 3) { await new Promise(s => setTimeout(s, 400 * 2 ** attempt)); continue; }
       return r;
     }
   }
@@ -189,7 +189,7 @@ export class SheetsStore {
   }
   async uploadPhoto({ base64, mime, name, parent }) {
     const folder = parent || this.env.DRIVE_FOLDER_ID;
-    if (!folder) return { fileId: '', folderId: '' };
+    if (!folder) throw new SchemaError('ยังไม่ได้ตั้งค่าโฟลเดอร์ Google Drive สำหรับรูปถ่าย');
     const token = await googleAccessToken(this.env, SCOPE);
     const boundary = 'crm' + Math.random().toString(36).slice(2);
     const meta = JSON.stringify({ name, parents: [folder] });

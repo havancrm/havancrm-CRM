@@ -25,11 +25,15 @@ function db() {
   });
   return dbp;
 }
-const idb = (store, mode, fn) => db().then(d => !d ? null : new Promise(res => { try { const tx = d.transaction(store, mode); const rq = fn(tx.objectStore(store)); tx.oncomplete = () => res(rq?.result); tx.onerror = () => res(null); } catch { res(null); } }));
+const idb = (store, mode, fn) => db().then(d => !d ? null : new Promise(res => { try { const tx = d.transaction(store, mode); const rq = fn(tx.objectStore(store)); tx.oncomplete = () => res(rq?.result); tx.onerror = () => res(null); tx.onabort = () => res(null); } catch { res(null); } }));
 const kvGet = async k => { const v = await idb('kv', 'readonly', s => s.get(k)); return v ?? memKV.get(k); };
 const kvSet = async (k, v) => { memKV.set(k, v); await idb('kv', 'readwrite', s => s.put(v, k)); };
 const qAll = async () => { const v = await idb('queue', 'readonly', s => s.getAll()); return v ?? [...memQ.values()]; };
-const qPut = async o => { memQ.set(o.opId, o); await idb('queue', 'readwrite', s => s.put(o)); };
+const qPut = async o => {
+  const key = await idb('queue', 'readwrite', s => s.put(o));
+  if (key !== o.opId) throw new Error('บันทึกงานลงอุปกรณ์ไม่สำเร็จ กรุณาตรวจพื้นที่จัดเก็บและลองใหม่');
+  memQ.set(o.opId, o);
+};
 const qDel = async id => { memQ.delete(id); await idb('queue', 'readwrite', s => s.delete(id)); };
 
 // ---------- API ----------
@@ -97,7 +101,7 @@ export async function loadQueue() { S.queue = (await qAll()).sort((a, b) => a.at
 export async function enqueue(type, payload) {
   const op = { opId: uuid(), type, payload, at: Date.now() };
   await expandOp(op, { now: op.at, user: S.user?.email || '', deviceId: S.deviceId });   // validate now (throws OpError -> shown to user)
-  S.queue.push(op); await qPut(op); rebuild();
+  await qPut(op); S.queue.push(op); rebuild();
   flush().catch(() => {});
   return op;
 }

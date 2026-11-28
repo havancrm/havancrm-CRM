@@ -37,7 +37,6 @@ svg.i{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stro
 .top{display:flex;align-items:center;gap:8px;min-height:36px}.top h1{font-size:var(--fs3);margin:0;flex:1;min-width:0}
 .bk{display:inline-flex;align-items:center;gap:2px;background:#fff;border:1px solid var(--ln);border-radius:var(--r);padding:6px 10px 6px 6px;font-weight:600;color:var(--n);flex:none;max-width:55%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:pointer}.bk svg.i{width:18px;height:18px}
 .ibs{display:flex;gap:2px}.ibn{width:40px;height:40px;border-radius:50%;border:1px solid var(--ln);background:#fff;display:inline-flex;align-items:center;justify-content:center;color:var(--n);cursor:pointer;flex:none}.ibn.gh{border:0;background:transparent;width:36px;height:36px}.i38{width:38px;height:38px}
-.act{position:sticky;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 6px);margin:4px -12px -14px;padding:10px 12px 12px;background:linear-gradient(rgba(233,239,249,0),var(--bg) 22%);display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;z-index:3}
 
 /* ===== bottom nav (home, customers, visit FAB, orders, settings) ===== */
 .nav{position:fixed;left:50%;transform:translateX(-50%);width:100%;max-width:480px;bottom:0;z-index:30;background:#fff;border-top:1px solid var(--ln);display:flex;align-items:flex-end;padding-bottom:max(4px,env(safe-area-inset-bottom));height:auto}
@@ -165,4 +164,5 @@ dl.kv dt{color:var(--mu);font-size:var(--fs1)}dl.kv dd{margin:0;min-width:0;over
 /* Customer 360: one compact action row; no sticky duplicate actions. */
 .customer-quick{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
 .customer-quick .btn{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;min-width:0;min-height:50px;padding:5px 1px;font-size:var(--fs1);line-height:1.25;white-space:normal;text-align:center;overflow-wrap:anywhere}
+#changes-list dd{overflow-wrap:anywhere;white-space:pre-wrap}
 .customer-quick .btn svg.i{width:18px;height:18px}

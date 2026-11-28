@@ -55,7 +55,13 @@ export async function execOp(store, op, ctx) {
     }
   }
 
-  for (const m of ex2.mutations) {
+  const mutations = [...ex2.mutations];
+  if (op.type === 'visit.log' && mutations.length > 1) {
+    // Write the dedupe row last. A retry after any earlier append can finish
+    // the visit without duplicating its already written activity or GPS row.
+    mutations.push(mutations.shift());
+  }
+  for (const m of mutations) {
     switch (m.op) {
       case 'append': {
         if (m.row.opId !== undefined && m.row.opId !== '') {
@@ -88,6 +94,9 @@ export async function execOp(store, op, ctx) {
         const n = await rowOf(store, m.tab, m.key.col, m.key.val);
         if (!n) break;
         const before = await store.getRow(m.tab, n);
+        if (m.match && Object.entries(m.match).some(([key, value]) => before[key] !== value)) {
+          throw new OpError('บันทึกนี้ถูกเปลี่ยนหรือไม่ตรงกับลูกค้าที่เลือก', 'target_mismatch');
+        }
         const b = {}; for (const k of Object.keys(m.patch)) b[k] = before[k];
         await store.updateRow(m.tab, n, m.patch);
         if (m.log) addLog(m.tab, m.key.val, 'update', b, m.patch);

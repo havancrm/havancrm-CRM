@@ -42,7 +42,7 @@ function paintShell(route) {
 }
 function paintHeader(title, top) {
   const pend = pendingCount(), failed = S.failed.length;
-  const state = S.syncing ? 'กำลังซิงก์…' : !S.online ? 'ออฟไลน์' : failed ? `ค้าง ${failed}` : pend ? `รอส่ง ${pend}` : `ซิงก์ ${new Date(S.lastSync || Date.now()).toTimeString().slice(0, 5)}`;
+  const state = S.syncing ? 'กำลังซิงก์…' : !S.online ? 'ออฟไลน์' : failed ? `ค้าง ${failed}` : pend ? `รอส่ง ${pend}` : (S.lastSync ? `ซิงก์ ${new Date(S.lastSync).toTimeString().slice(0, 5)}` : 'ยังไม่ได้ซิงก์');
   const cls = !S.online ? 'x' : failed ? 'err' : pend ? 'w' : '';
   const d = new Date(), be = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear() + 543}`;
   $('#hdr').innerHTML = `<div class="rw"><div class="brand"><i></i><span id="ttl">HAVAN CRM</span></div><button class="hbtn" data-go="#/settings/sync" aria-label="อัปเดต/ซิงก์">${icon('refresh')}${failed ? `<em class="bdg">${failed}</em>` : ''}</button></div><button class="st" data-go="#/settings/sync" aria-label="สถานะซิงก์">${be} · <span class="dot ${cls}"></span> ${state}</button>`;
@@ -114,6 +114,10 @@ function showLogin(msg = '') {
   el.innerHTML = `<div class="box"><div style="width:64px;height:64px;margin:0 auto 14px;border-radius:16px;background:var(--grad);display:grid;place-items:center;color:#fff;font-weight:800;font-size:28px">H</div>
     <h2 style="margin-bottom:4px">HAVAN CRM</h2><p class="muted sm" style="margin-bottom:18px">เข้าสู่ระบบด้วยบัญชี Google ที่ได้รับอนุญาต</p>
     ${msg ? `<div class="banner bad" style="margin-bottom:12px">${esc(msg)}</div>` : ''}<div id="gbtn" style="display:flex;justify-content:center"></div></div>`;
+  if (!S.health?.googleClientId) {
+    if (!msg) $('#gbtn').textContent = 'ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ Google';
+    return;
+  }
   loadGoogleScript().then(() => {
     window.google.accounts.id.initialize({ client_id: S.health.googleClientId, auto_select: true, callback: async r => { setToken(r.credential); el.classList.add('hide'); await start(); } });
     window.google.accounts.id.renderButton($('#gbtn'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'th' });

@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS = {
   // dormDays = no purchase for longer than this => "หยุดซื้อนาน / ห่างหาย", lateDays = overdue for longer than this => "เกินรอบนาน",
   // nearDays = "ใกล้ถึงรอบ" window. aCRM does NOT derive a buying cycle from history (stores order irregularly).
   comm: 8, visitDef: 30, dormDays: 365, lateDays: 90, nearDays: 7, vatRate: 7,
-  newDays: 90,        // CRM-only: "ลูกค้าใหม่" window (first purchase / newly registered within N days)
+  newDays: 0,         // Use this calendar month until a rolling window has been set.
 };
 
 // Pairs confirmed by the user (old code -> current code). Used ONLY to link history for
@@ -130,6 +130,12 @@ function groupBy(rows, key, sort) {
 export const billTotal = (m, no) => m.billTotals.get(no) || 0;
 export const custName = (m, id) => (m.custById.get(id)?.name) || `(ไม่พบลูกค้า ${id})`;
 export const custLabels = (m, id) => (m.labels.get(id) || []).map(l => l.label).filter(Boolean);
+
+export function customerLabelCounts(m) {
+  const counts = new Map();
+  for (const id of m.custById.keys()) for (const label of new Set(custLabels(m, id))) counts.set(label, (counts.get(label) || 0) + 1);
+  return [...counts].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b, 'th'));
+}
 export const custPhones = (m, id) => (m.phones.get(id) || []).map(p => p.phone).filter(Boolean);
 export const itemKey = i => (i.code ? `c:${i.code}` : `n:${i.name}`);
 
@@ -243,13 +249,15 @@ export function registeredAt(m, id) {
   }
   return m._reg.get(id) || '';
 }
+function inNewCustomerWindow(date, today, days) {
+  if (!date || date > today) return false;
+  return days > 0 ? dayNum(today) - dayNum(date) <= days : date.slice(0, 7) === today.slice(0, 7);
+}
 export function isFirstPurchaseNew(m, c, days = m.settings.newDays) {
-  const st = customerStats(m, c.id);
-  return !!st.firstDate && dayNum(m.today) - dayNum(st.firstDate) <= days;
+  return inNewCustomerWindow(customerStats(m, c.id).firstDate, m.today, days);
 }
 export function isRecentlyRegistered(m, c, days = m.settings.newDays) {
-  const r = registeredAt(m, c.id);
-  return !!r && dayNum(m.today) - dayNum(r) <= days;
+  return inNewCustomerWindow(registeredAt(m, c.id), m.today, days);
 }
 export const isNewCustomer = isFirstPurchaseNew;       // legacy alias (first purchase)
 
@@ -285,7 +293,7 @@ export function salesBetween(m, from, to) {
     total += t; billCount++; billsInRange.push(b);
     const mo = d.slice(0, 7);
     byMonth.set(mo, (byMonth.get(mo) || 0) + t);
-    const ck = b.openedBy || '-', sk = b.salesperson || '-';
+    const ck = b.openedBy || '-', sk = String(b.salesperson || '').trim().replace(/^53$/, 'อาร์ต') || '-';
     byClerk.set(ck, (byClerk.get(ck) || 0) + t);
     bySales.set(sk, (bySales.get(sk) || 0) + t);
     byCust.set(b.customerId, (byCust.get(b.customerId) || 0) + t);
@@ -296,6 +304,14 @@ export function salesBetween(m, from, to) {
 export function periodRange(kind, today) {
   const t = dayNum(today);
   const y = +today.slice(0, 4), mo = +today.slice(5, 7);
+  if (/^year-\d{4}$/.test(kind)) {
+    const year = kind.slice(5);
+    return [`${year}-01-01`, `${year}-12-31`];
+  }
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(kind)) {
+    const [year, month] = kind.split('-').map(Number);
+    return [`${kind}-01`, dayStr(Math.floor(Date.UTC(year, month, 0) / DAY))];
+  }
   switch (kind) {
     case 'today': return [today, today];
     case '7d': return [dayStr(t - 6), today];
@@ -531,12 +547,19 @@ export function qualityReport(m) {
   for (const b of m.bills) {
     if (!m.custById.has(b.customerId)) push('BILL_NO_CUSTOMER', 'warn', `บิล ${b.no} อ้างลูกค้า ${b.customerId} ที่ไม่มีในฐาน`, { billNo: b.no });
     if (!m.itemsByBill.has(b.no)) push('BILL_NO_ITEMS', 'warn', `บิล ${b.no} ไม่มีรายการ`, { billNo: b.no });
+    else if (Math.round(billTotal(m, b.no) * 100) === 0) push('BILL_ZERO_TOTAL', 'warn', `บิล ${b.no} ยอดรวม 0 บาท`, { billNo: b.no });
     if (isNaN(dayNum(b.date))) push('BILL_BAD_DATE', 'warn', `บิล ${b.no} วันที่ไม่ถูกต้อง "${b.date}"`, { billNo: b.no });
   }
   for (const [no] of m.itemsByBill) if (!m.billByNo.has(no)) push('ITEM_NO_BILL', 'error', `รายการอ้างบิล ${no} ที่ไม่มีหัวบิล`, { billNo: no });
 
   // VAT guard: a bill that already carries a VAT/tax line must never get VAT added again.
   for (const [no, items] of m.itemsByBill) {
+    for (const item of items) {
+      const amount = String(item.amount ?? '').trim().replace(/[,฿\s]/g, '');
+      if (!amount || !Number.isFinite(Number(amount))) {
+        push('ITEM_BAD_AMOUNT', 'warn', `บิล ${no} บรรทัด ${item.line} ยอดรายการไม่ถูกต้อง`, { billNo: no });
+      }
+    }
     if (items.some(i => /vat|ภาษีมูลค่าเพิ่ม/i.test(i.name || ''))) {
       push('BILL_HAS_VAT_LINE', 'info', `บิล ${no} มีรายการภาษีอยู่แล้ว (ระบบไม่คิดซ้ำ)`, { billNo: no });
     }

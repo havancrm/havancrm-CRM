@@ -6,9 +6,11 @@ import { custRow, emptyMsg, pager, bindPager, openBill } from './common.js';
 const PERIODS = [['today', 'วันนี้'], ['7d', '7 วัน'], ['month', 'เดือนนี้'], ['lastmonth', 'เดือนก่อน'], ['year', 'ปีนี้'], ['all', 'ทั้งหมด']];
 
 export default function sales({ m, query }) {
-  const p = PERIODS.some(x => x[0] === query.p) ? query.p : 'month';
+  const years = [...new Set(m.bills.map(b => D.dateOf(b.date).slice(0, 4)).filter(y => /^\d{4}$/.test(y)))].sort().reverse();
+  const yearPeriods = years.map(y => [`year-${y}`, String(Number(y) + 543)]);
+  const p = [...PERIODS, ...yearPeriods].some(([key]) => key === query.p) ? query.p : 'month';
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(query.mo || query.q || '') ? (query.mo || query.q) : '';
-  const [from, to] = month ? [month + '-01', D.dayStr(D.dayNum(`${month}-01`) + new Date(Date.UTC(+month.slice(0,4), +month.slice(5,7), 0)).getUTCDate() - 1)] : D.periodRange(p, m.today);
+  const [from, to] = D.periodRange(month || p, m.today);
   const r = D.salesBetween(m, from, to);
   const view = ['month', 'clerk', 'cust', 'bills'].includes(query.v) ? query.v : 'month';
   const avg = r.billCount ? r.total / r.billCount : 0;
@@ -20,6 +22,7 @@ export default function sales({ m, query }) {
   const kv = (t, v, go) => `<button class="card soft" ${go ? `data-v="${go}"` : 'disabled'} style="text-align:center;min-width:0;border:0;cursor:pointer"><div class="xs muted">${t}</div><div class="b num" style="font-size:16px">${v}</div></button>`;
   const html = `<div class="stack">
     <div class="chips">${PERIODS.map(([k, t]) => `<button class="chip ${!month && p === k ? 'on' : ''}" data-p="${k}">${t}</button>`).join('')}</div>
+    ${yearPeriods.length ? `<div class="chips" role="group" aria-label="เลือกปี พ.ศ.">${yearPeriods.map(([k, t]) => `<button class="chip ${!month && p === k ? 'on' : ''}" data-p="${k}">${t}</button>`).join('')}</div>` : ''}
     <div class="hero" style="margin:0;border-radius:14px"><div class="sm" style="opacity:.8">ยอดขายรวม ${from ? fmtDate(from) + ' – ' + fmtDate(to) : 'ทั้งหมด'}</div><div class="num" style="font-size:30px;font-weight:700">${D.money(r.total)} <span style="font-size:15px">฿</span></div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">${kv('จำนวนบิล', D.money(r.billCount), 'bills')}${kv('เฉลี่ย/บิล', D.money(avg), '')}${kv('ลูกค้า', custs.length, 'cust')}</div>
     <div class="xs faint">ยอดขายคำนวณจากผลรวมรายการในบิล (bill_items.amount) ของฐาน CRM เท่านั้น ไม่บวกภาษีเพิ่ม ถ้ายอดต่างจากระบบเดิมให้ยึดฐาน CRM</div>
@@ -41,7 +44,8 @@ export default function sales({ m, query }) {
           box.innerHTML = (grp('เสมียนที่เปิดบิล', clerks) + grp('พนักงานขาย', sellers)) || emptyMsg('ไม่มีข้อมูล');
         }
         else if (view === 'cust') {
-          const rows = custs.filter(([id]) => !t || D.normText(D.custName(m, id)).includes(t) || id === inp.value.trim());
+          const matches = t ? new Set(D.searchCustomers(m, inp.value, Infinity).map(c => c.id)) : null;
+          const rows = custs.filter(([id]) => !matches || matches.has(id) || D.normText(D.custName(m, id)).includes(t));
           const row = ([id, v]) => custRow(m, m.custById.get(id) || { id, name: D.custName(m, id) }, { extra: `<span class="b num">${D.money(v)}</span>` });
           box.innerHTML = rows.length ? `<div class="list">${pager(rows, row, { id: 'sc' })}</div>` : emptyMsg('ไม่พบ'); bindPager(box, rows, row, { id: 'sc' });
         } else {

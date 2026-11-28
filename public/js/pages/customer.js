@@ -1,5 +1,5 @@
 import * as D from '../shared/domain.js';
-import { esc, icon, fmtDate, fmtDateTime, sheet, debounce } from '../ui.js';
+import { esc, icon, fmtDate, fmtDateTime, sheet, debounce, toast, confirmBox } from '../ui.js';
 import { photoUrl, enqueue, S } from '../data.js';
 import { billLinesHtml, openBill, emptyMsg, pager, bindPager } from './common.js';
 import { visitSheet, geoPhotoSheet, editCustomerSheet, completeTaskSheet, assignCodeSheet } from './forms.js';
@@ -71,11 +71,13 @@ function overview(m, c, st, hasGps) {
   const lastGps = gpsRows[gpsRows.length - 1];
   const fileIds = String(c.storePhotoFileIds || '').split(',').map(s => s.trim()).filter(Boolean);
   const cyc = st.status === 'closed' ? 'เลิกกิจการ' : !st.eligible ? 'ยังไม่มีรอบ' : st.dueDiff < 0 ? `<b class="rd">เกินรอบ ${-st.dueDiff} วัน</b> (ครบรอบ ${fmtDate(st.dueDate)})` : st.dueDiff === 0 ? '<b>ถึงรอบวันนี้</b>' : `ถึงรอบ ${fmtDate(st.dueDate)} (อีก ${st.dueDiff} วัน)`;
-  const pre = [c.keepNote && `<div><b>บันทึกก่อนเข้าร้าน</b><br>${esc(c.keepNote).replace(/\n/g, '<br>')}</div>`, c.specialConditions && `<div><b>เงื่อนไขพิเศษ</b><br>${esc(c.specialConditions)}</div>`, c.storeHours && `<div class="sm muted">เวลาเปิด-ปิด ${esc(c.storeHours)}</div>`, lv?.note && `<div class="sm muted">เข้าพบล่าสุด ${fmtDate(D.dateOf(lv.at))}: ${esc(lv.note)}</div>`].filter(Boolean);
+  const pre = [c.specialConditions && `<div><b>เงื่อนไขพิเศษ</b><br>${esc(c.specialConditions)}</div>`, c.storeHours && `<div class="sm muted">เวลาเปิด-ปิด ${esc(c.storeHours)}</div>`, lv?.note && `<div class="sm muted">เข้าพบล่าสุด ${fmtDate(D.dateOf(lv.at))}: ${esc(lv.note)}</div>`].filter(Boolean);
   const body = `
     <div class="card soft"><div class="row between"><div class="sm muted">ซื้อล่าสุด</div><div class="b">${st.lastDate ? `${fmtDate(st.lastDate)} · ${st.daysSince} วันที่แล้ว` : '—'}</div></div>
       <div class="sm" style="margin-top:4px">รอบลูกค้า: ${cyc}</div>
       <div class="row between sm muted" style="margin-top:6px"><span>${st.bills} บิล · ยอดรวม ${D.money(st.total)} ฿</span><span>เข้าพบล่าสุด ${st.lastVisit ? fmtDate(st.lastVisit) : 'ยังไม่เคย'}</span></div></div>
+    <div class="sec"><span>บันทึกก่อนเข้าร้าน</span><button class="btn ghost sm" data-pre-note>${icon('plus')} เพิ่มบันทึก</button></div>
+    <div class="card soft">${c.keepNote ? esc(c.keepNote).replace(/\n/g, '<br>') : '<span class="muted">ยังไม่มีบันทึกก่อนเข้าร้าน</span>'}</div>
     ${pre.length ? `<div class="banner" style="background:var(--blue-soft);color:var(--ink)">${pre.join('<div style="height:6px"></div>')}</div>` : ''}
     <div class="sec"><span>บิลล่าสุด</span>${lb ? `<a href="#/c/${encodeURIComponent(c.id)}?tab=history">ทั้งหมด</a>` : ''}</div>
     ${lb ? `<div class="card" data-bill="${esc(lb.no)}" style="cursor:pointer"><div class="row between"><span class="b">บิล ${esc(lb.no)}</span><span class="b num">${D.money(D.billTotal(m, lb.no))} ฿</span></div><div class="xs muted">${fmtDate(lb.date)} · ${esc(lb.paymentTerm || '')}</div>${billLinesHtml(m, lb.no)}</div>` : emptyMsg('ยังไม่มีบิล')}
@@ -92,6 +94,21 @@ function overview(m, c, st, hasGps) {
     body,
     after(root) {
       root.querySelector('[data-bill]')?.addEventListener('click', e => openBill(m, e.currentTarget.dataset.bill));
+      root.querySelector('[data-pre-note]').onclick = () => {
+        const form = sheet(`<h3>บันทึกก่อนเข้าร้าน</h3><textarea class="inp" aria-label="บันทึกก่อนเข้าร้าน" rows="4">${esc(c.keepNote || '')}</textarea><button class="btn grad block" data-save>บันทึก</button>`);
+        const save = form.el.querySelector('[data-save]');
+        save.onclick = async () => {
+          save.disabled = true;
+          try {
+            await enqueue('customer.update', { customerId: c.id, patch: { keepNote: form.el.querySelector('textarea').value.trim() } });
+            form.close();
+            toast('บันทึกแล้ว');
+          } catch (error) {
+            toast(error.message);
+            save.disabled = false;
+          }
+        };
+      };
       root.querySelector('[data-act="geo2"]')?.addEventListener('click', () => geoPhotoSheet(c.id));
       if (fileIds.length) photoUrl(fileIds[fileIds.length - 1]).then(u => { const el = root.querySelector('#sp'); if (el) el.innerHTML = u ? `<img src="${u}" alt="รูปหน้าร้าน">` : 'โหลดรูปไม่สำเร็จ'; });
     },
@@ -130,7 +147,6 @@ function history(m, c) {
 }
 
 function visitsTab(m, c) {
-  const kindOf = v => { try { return JSON.parse(v.data || '{}').kind || ''; } catch { return ''; } };
   const ev = [];
   for (const v of m.visitsByCust.get(c.id) || []) ev.push({ k: D.visitPlanned(v) ? 'planned' : 'visit', t: v.at || v.plannedAt, v });
   for (const t of m.tasksByCust.get(c.id) || []) ev.push({ k: String(t.status).toLowerCase() === 'open' ? 'task' : 'taskdone', t: t.completedAt || t.dueAt, v: t });
@@ -146,10 +162,12 @@ function visitsTab(m, c) {
   const nVisits = ev.filter(e => e.k === 'visit').length, open = ev.filter(e => e.k === 'task' || e.k === 'planned').length;
   const row = e => {
     const [t, cls] = badge(e), v = e.v;
-    const when = e.k === 'task' ? 'นัด ' + fmtDate(v.dueAt) : e.k === 'planned' ? 'นัด ' + fmtDate(v.plannedAt) : fmtDateTime(e.t);
+    const time = D.parseJson(v.data).time;
+    const when = e.k === 'task' ? 'นัด ' + fmtDate(v.dueAt) + (time ? ' · ' + esc(time) : '') : e.k === 'planned' ? 'นัด ' + fmtDate(v.plannedAt) : fmtDateTime(e.t);
     const note = e.k === 'task' || e.k === 'taskdone' ? v.note || v.title : v.note;
     return `<div class="li" style="cursor:default;align-items:flex-start"><div class="grow"><div class="row"><span class="badge ${cls}">${esc(t)}</span><span class="xs faint">${when}</span></div>
       <div class="sm" style="margin-top:4px;white-space:pre-line">${esc(note || '—')}</div>${v.outcome ? `<div class="xs muted">ผล: ${esc(v.outcome)}</div>` : ''}${e.k === 'visit' && v.lat ? `<div class="xs faint">${icon('pin')} ${(+v.lat).toFixed(4)}, ${(+v.lng).toFixed(4)}</div>` : ''}</div>
+      ${e.k === 'act' && v.type === 'โน้ต' ? `<button class="btn ghost sm" data-edit-note="${esc(v.activityId)}">แก้ไข</button>` : ''}
       ${e.k === 'task' ? `<button class="btn ghost sm" data-done="${esc(v.taskId)}">เสร็จแล้ว</button>` : ''}</div>`;
   };
   const body = `<div class="row"><button class="btn grad grow" data-act="note2">${icon('plus')} บันทึกเข้าพบ / โน้ต / นัดหมาย</button></div>
@@ -159,7 +177,31 @@ function visitsTab(m, c) {
     body,
     after(root) {
       root.querySelector('[data-act="note2"]').onclick = () => visitSheet(c.id);
+      root.querySelectorAll('[data-edit-note]').forEach(button => {
+        button.onclick = () => editNote(c.id, ev.find(e => e.v.activityId === button.dataset.editNote).v);
+      });
       root.querySelectorAll('[data-done]').forEach(b => b.onclick = () => completeTaskSheet((m.tasksByCust.get(c.id) || []).find(t => t.taskId === b.dataset.done)));
     },
+  };
+}
+
+function editNote(customerId, activity) {
+  const form = sheet(`<h3>แก้ไขโน้ต</h3><label class="field"><span>ข้อความ</span><textarea class="inp" rows="4">${esc(activity.note)}</textarea></label>
+    <div class="row"><button class="btn ghost" data-remove>ลบโน้ต</button><button class="btn grad grow" data-save>บันทึก</button></div>`);
+  const buttons = [...form.el.querySelectorAll('[data-save],[data-remove]')];
+  const submit = async remove => {
+    buttons.forEach(button => button.disabled = true);
+    try {
+      await enqueue('note.update', { customerId, activityId: activity.activityId, note: form.el.querySelector('textarea').value, remove });
+      form.close();
+      toast(remove ? 'บันทึกการลบแล้ว' : 'บันทึกการแก้ไขแล้ว');
+    } catch (error) {
+      toast(error.message);
+      buttons.forEach(button => button.disabled = false);
+    }
+  };
+  form.el.querySelector('[data-save]').onclick = () => submit(false);
+  form.el.querySelector('[data-remove]').onclick = async () => {
+    if (await confirmBox('ลบโน้ตนี้จากประวัติของร้าน?', 'ลบโน้ต')) await submit(true);
   };
 }

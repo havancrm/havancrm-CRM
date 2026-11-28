@@ -50,8 +50,10 @@ export function expandOp(op, ctx) {
       }
       if (kind === 'appointment') {                            // aCRM: appointments are follow-up tasks "ติดตาม"
         need(/^\d{4}-\d{2}-\d{2}/.test(str(p.plannedAt)), 'ต้องระบุวันที่นัดหมาย');
+        const time = str(p.time);
+        need(!time || /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(time), 'เวลานัดไม่ถูกต้อง');
         const taskId = `T-${oid}`;
-        M.push({ tab: 'tasks', op: 'append', row: { taskId, customerId: p.customerId, type: 'ติดตาม', title: str(p.title) || 'ติดตาม', dueAt: dueStamp(p.plannedAt), status: 'open', note: str(p.note), owner: by, updatedAt: ts, data: JSON.stringify({ time: str(p.time), _lastOpId: oid }), opId: oid, createdAt: ts, completedAt: '' } });
+        M.push({ tab: 'tasks', op: 'append', row: { taskId, customerId: p.customerId, type: 'ติดตาม', title: str(p.title) || 'ติดตาม', dueAt: dueStamp(p.plannedAt), status: 'open', note: str(p.note), owner: by, updatedAt: ts, data: JSON.stringify({ time, _lastOpId: oid }), opId: oid, createdAt: ts, completedAt: '' } });
         M.push(act('ติดตาม', p.customerId, { refType: 'task', refId: taskId, note: str(p.note), suffix: '' }));
         dedupe.tab = 'tasks'; dedupe.id = oid;
         return { mutations: M, dedupe, result: { taskId } };
@@ -62,6 +64,19 @@ export function expandOp(op, ctx) {
       if (hasGps) M.push({ tab: 'gps', op: 'append', row: { gpsId: `G-${oid}`, customerId: p.customerId, at: ts, lat: str(p.lat), lng: str(p.lng), accuracy: str(p.accuracy), source: 'visit', visitId, note: '', updatedAt: ts, data: JSON.stringify({ by }), opId: `${oid}:g` } });
       dedupe.tab = 'visits'; dedupe.id = oid;
       return { mutations: M, dedupe, result: { visitId } };
+    }
+    case 'note.update': {
+      const id = str(p.activityId);
+      const note = str(p.note).trim();
+      need(id && str(p.customerId), 'ต้องระบุบันทึกและลูกค้า');
+      need(p.remove || note, 'กรุณาพิมพ์โน้ต');
+      const patch = p.remove ? { type: 'ลบ', updatedAt: ts } : { note, updatedAt: ts };
+      M.push({
+        tab: 'activities', op: 'update', key: { col: 'activityId', val: id }, patch, mustExist: true, log: true,
+        match: { customerId: str(p.customerId), type: 'โน้ต' },
+      });
+      dedupe.tab = 'changes'; dedupe.id = oid;
+      return { mutations: M, dedupe, result: {} };
     }
     case 'task.complete': {
       need(str(p.taskId), 'ต้องระบุงาน');
@@ -183,6 +198,21 @@ export function expandOp(op, ctx) {
       dedupe.tab = 'orders'; dedupe.id = oid;
       return { mutations: M, dedupe, result: { no: o.no } };
     }
+    case 'order.status': {
+      const no = str(p.no), customerId = str(p.customerId);
+      const transitions = {
+        [ORDER_ST.draft]: [ORDER_ST.cancelled],
+        [ORDER_ST.pending]: [ORDER_ST.delivered, ORDER_ST.cancelled],
+      };
+      need(no && customerId, 'ต้องระบุออเดอร์และลูกค้า');
+      need(transitions[p.from]?.includes(p.status), 'เปลี่ยนสถานะออเดอร์นี้ไม่ได้');
+      M.push({
+        tab: 'orders', op: 'update', key: { col: 'no', val: no }, patch: { status: p.status, updatedAt: ts }, mustExist: true, log: true,
+        match: { customerId, status: p.from },
+      });
+      dedupe.tab = 'changes'; dedupe.id = oid;
+      return { mutations: M, dedupe, result: {} };
+    }
     case 'settings.save': {
       const d = p.data || {};
       const allowed = ['visitDef', 'dormDays', 'lateDays', 'nearDays', 'newDays', 'comm', 'vatRate'];
@@ -249,7 +279,7 @@ export function applyMutationsLocal(raw, mutations) {
       case 'append': rows.push({ ...m.row }); break;
       case 'appendUnique': for (const r of m.rows) if (!rows.some(x => x[m.col] === r[m.col])) rows.push({ ...r }); break;
       case 'appendUniqueComposite': for (const r of m.rows) if (!rows.some(x => m.cols.every(c => x[c] === r[c]))) rows.push({ ...r }); break;
-      case 'update': { const r = rows.find(x => x[m.key.col] === String(m.key.val)); if (r) Object.assign(r, m.patch); break; }
+      case 'update': { const r = rows.find(x => x[m.key.col] === String(m.key.val)); if (r && Object.entries(m.match || {}).every(([k, v]) => r[k] === v)) Object.assign(r, m.patch); break; }
       case 'updateWhere': for (const r of rows) if (String(r[m.key.col] || '').includes(m.key.contains)) Object.assign(r, m.patch); break;
       case 'updateAll': for (const r of rows) if (r[m.col] === m.from) r[m.col] = m.to; break;
       case 'upsert': { const r = rows.find(x => x[m.key.col] === String(m.key.val)); if (r) { const keep = {}; for (const k of m.keepOnUpdate || []) keep[k] = r[k]; Object.assign(r, m.row, keep); } else rows.push({ ...m.row }); break; }
