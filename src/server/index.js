@@ -1,4 +1,5 @@
 // Cloudflare Worker entry: static assets (public/) + /api/*.
+import { appsScriptUrl } from './apps-script.js';
 import { MemoryStore, SheetsStore, SchemaError } from './store.js';
 import { authenticate, AuthError, loadAccess } from './auth.js';
 import { execBatch } from './exec.js';
@@ -8,7 +9,7 @@ import { OpError } from '../../public/js/shared/ops.js';
 
 // Cloudflare Free allows 50 subrequests per invocation; one op needs <= ~12 Google calls.
 const MAX_OPS_PER_REQUEST = 4;
-const VERSION = '1.0.0+18d979e';
+const VERSION = '1.0.0+e0c561a';
 let memStore = null;
 
 function getStore(env) {
@@ -29,7 +30,8 @@ export default {
     try {
       const store = getStore(env);
       if (url.pathname === '/api/health') {
-        return json({ ok: true, version: VERSION, mode: store.mode, authMode: env.AUTH_MODE || 'google', googleClientId: env.AUTH_MODE === 'dev' ? '' : env.GOOGLE_CLIENT_ID || '' });
+        return json({ ok: true, version: VERSION, mode: store.mode, authMode: env.AUTH_MODE || 'google', googleClientId: env.AUTH_MODE === 'google' || !env.AUTH_MODE ? env.GOOGLE_CLIENT_ID || '' : '',
+          ...(env.AUTH_MODE === 'apps_script' ? { loginUrl: appsScriptUrl(env.CRM_LOGIN_URL) } : {}) });
       }
       const me = await authenticate(req, env, store);
       const ctx = { now: Date.now(), user: me.email, isAdmin: me.isAdmin, deviceId: req.headers.get('x-device-id') || '' };

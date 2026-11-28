@@ -29,3 +29,14 @@ Version URL ใช้การเชื่อมต่อฐานที่ก�
 ใช้ Workers Free และตั้งให้เวอร์ชันที่ผ่าน Preview รับทราฟฟิกทั้งหมดของ Worker `crm` ตรวจซ้ำที่ [HAVAN CRM](https://crm.havan-crm.workers.dev) และ `/api/health` ตรวจ Google Login, การอ่านชีต CRM, การส่งงาน และยอดขาย พร้อมบันทึก commit SHA, app version และ Cloudflare version ID
 
 GitHub Actions `Deploy` เป็น workflow แบบสั่งด้วยตนเองและต้องมีสิทธิ์ Cloudflare ที่ตั้งค่าไว้ใน repository ก่อนใช้งาน ตัว build จะ stamp เวอร์ชันจาก SHA ของ source checkout เดียวกันลงใน HTML, service worker และ `/api/health`
+
+## ใช้ Apps Script แทนการตั้งค่า Google Cloud Console
+
+ใช้สคริปต์ใน `integrations/apps-script` สองโปรเจกต์แยกกันเพื่อจำกัดขอบเขตสิทธิ์
+
+- `login.gs` เป็น Web App ที่ทำงานเป็นผู้เข้าถึงและเปิดเฉพาะบัญชี Google ใช้ `login-manifest.json` เป็น `appsscript.json` มี Script Property `CRM_LOGIN_SECRET` ตัว Worker ตรวจลายเซ็น ระยะเวลา โดเมน และอีเมลในแท็บ `ACCESS` ก่อนแสดงข้อมูล
+- `bridge.gs` เป็น Web App ที่ทำงานเป็นเจ้าของชีต มี Script Property `CRM_BRIDGE_SECRET` คนละค่ากับของระบบล็อกอิน ใช้ `bridge-manifest.json` เป็น `appsscript.json` เพื่อเปิด Sheets และ Drive API ในโปรเจกต์เริ่มต้น URL นี้รับเฉพาะคำขอที่ลงลายเซ็นและจำกัดการเข้าถึง Sheets ที่ชีต CRM เดิม สำหรับรูปถ่ายจะสร้างโฟลเดอร์ HAVAN CRM Photos เมื่อบันทึกรูปแรก สิทธิ์ `drive.file` ครอบคลุมไฟล์ที่แอปสร้างหรือที่ผู้ใช้เปิดให้แอปเข้าถึง รูปที่สร้างจากระบบเดิมต้องตรวจสิทธิ์ก่อนเปิดใช้จริง
+
+ตั้ง `AUTH_MODE=apps_script`, `DATA_MODE=apps_script`, `CRM_LOGIN_URL` และ `CRM_BRIDGE_URL` ใน Worker ตั้ง `CRM_LOGIN_SECRET` และ `CRM_BRIDGE_SECRET` เป็น Secret ของ Worker ค่า Secret ต้องตรงกับ Script Property ของ Web App แต่ละตัว
+
+เก็บ Production ปิดไว้จนยืนยันการเข้าสู่ระบบด้วยบัญชีที่มีสิทธิ์และไม่มีสิทธิ์ อ่านหัวตารางจริง 18 แท็บ และทดสอบซิงก์ด้วยรายการที่เจ้าของอนุมัติให้ใช้ตรวจรับ

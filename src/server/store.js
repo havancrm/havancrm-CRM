@@ -1,5 +1,6 @@
 // Storage adapters. Every method addresses columns by HEADER NAME; row positions are only
 // used transiently (to update/delete a specific row found by key).
+import { bridgeRequest } from './apps-script.js';
 import { SCHEMA, NUMERIC_COLS, checkHeaders, rowsToObjects } from '../../public/js/shared/schema.js';
 
 export class SchemaError extends Error {}
@@ -101,6 +102,7 @@ export class SheetsStore {
     if (!this.id) throw new SchemaError('ไม่ได้ตั้งค่า SPREADSHEET_ID');
   }
   async _fetch(path, init = {}, base = 'https://sheets.googleapis.com/v4/spreadsheets') {
+    if (this.env.DATA_MODE === 'apps_script') return bridgeRequest(this.env, { kind: 'sheets', path, method: init.method || 'GET', payload: init.body });
     const token = await googleAccessToken(this.env, SCOPE);
     for (let attempt = 0; ; attempt++) {
       const r = await fetch(`${base}/${this.id}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) } });
@@ -184,10 +186,21 @@ export class SheetsStore {
     await this._json(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) });
   }
   async fetchPhoto(fileId) {
+    if (this.env.DATA_MODE === 'apps_script') {
+      const r = await bridgeRequest(this.env, { kind: 'photo-get', fileId });
+      if (!r.ok) return r;
+      const { mime, base64 } = await r.json();
+      return new Response(Uint8Array.from(atob(base64), c => c.charCodeAt(0)), { headers: { 'content-type': mime } });
+    }
     const token = await googleAccessToken(this.env, SCOPE);
     return fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { authorization: `Bearer ${token}` } });
   }
   async uploadPhoto({ base64, mime, name, parent }) {
+    if (this.env.DATA_MODE === 'apps_script') {
+      const r = await bridgeRequest(this.env, { kind: 'photo-add', base64, mime, name });
+      if (!r.ok) throw new Error('บันทึกรูปไม่สำเร็จ (' + r.status + ')');
+      return r.json();
+    }
     const folder = parent || this.env.DRIVE_FOLDER_ID;
     if (!folder) throw new SchemaError('ยังไม่ได้ตั้งค่าโฟลเดอร์ Google Drive สำหรับรูปถ่าย');
     const token = await googleAccessToken(this.env, SCOPE);

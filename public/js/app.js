@@ -114,6 +114,20 @@ function showLogin(msg = '') {
   el.innerHTML = `<div class="box"><div style="width:64px;height:64px;margin:0 auto 14px;border-radius:16px;background:var(--grad);display:grid;place-items:center;color:#fff;font-weight:800;font-size:28px">H</div>
     <h2 style="margin-bottom:4px">HAVAN CRM</h2><p class="muted sm" style="margin-bottom:18px">เข้าสู่ระบบด้วยบัญชี Google ที่ได้รับอนุญาต</p>
     ${msg ? `<div class="banner bad" style="margin-bottom:12px">${esc(msg)}</div>` : ''}<div id="gbtn" style="display:flex;justify-content:center"></div></div>`;
+  if (S.health?.authMode === 'apps_script') {
+    const url = S.health.loginUrl;
+    if (!url) { $('#gbtn').textContent = 'ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ Google'; return; }
+    const button = document.createElement('button');
+    button.className = 'btn grad';
+    button.textContent = 'เข้าสู่ระบบด้วย Google';
+    button.onclick = () => {
+      const state = crypto.randomUUID();
+      sessionStorage.setItem('crmAppScriptState', state);
+      location.assign(url + '?' + new URLSearchParams({ origin: location.origin, state }));
+    };
+    $('#gbtn').append(button);
+    return;
+  }
   if (!S.health?.googleClientId) {
     if (!msg) $('#gbtn').textContent = 'ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ Google';
     return;
@@ -153,6 +167,17 @@ async function start() {
   try { await init(); } catch (e) { $('#view').innerHTML = `<div class="banner bad">ติดต่อเซิร์ฟเวอร์ไม่ได้: ${esc(e.message)}</div>`; return; }
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('/sw.js').then(reg => reg.update()).catch(() => {});
+  }
+  if (location.hash.startsWith('#crm-login=')) {
+    const callback = new URLSearchParams(location.hash.slice(1));
+    const state = sessionStorage.getItem('crmAppScriptState');
+    sessionStorage.removeItem('crmAppScriptState');
+    history.replaceState(null, '', location.pathname + location.search);
+    if (S.health.authMode === 'apps_script' && state && callback.get('state') === state) {
+      setToken(callback.get('crm-login') || '');
+    } else {
+      return showLogin('ยืนยันเซสชันไม่ได้ กรุณาเริ่มเข้าสู่ระบบอีกครั้ง');
+    }
   }
   await start();
 })();

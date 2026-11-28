@@ -1,3 +1,5 @@
+import { verifyAppsScriptIdentity } from './apps-script.js';
+
 // Authentication: Google ID token -> email -> ACCESS tab (active + role).
 // AUTH_MODE=dev is honoured ONLY together with DATA_MODE=memory, so production can never run open.
 const tokenOk = new Map();      // idToken -> {email, exp}
@@ -40,7 +42,12 @@ export async function authenticate(req, env, store) {
   } else {
     const h = req.headers.get('authorization') || '';
     if (!h.startsWith('Bearer ')) throw new AuthError('ต้องเข้าสู่ระบบ');
-    email = await verifyGoogle(h.slice(7), env);
+    if (env.AUTH_MODE === 'apps_script') {
+      email = await verifyAppsScriptIdentity(h.slice(7), env.CRM_LOGIN_SECRET, new URL(req.url).origin);
+      if (!email) throw new AuthError('หมดเวลาเข้าสู่ระบบ กรุณาเข้าสู่ระบบด้วย Google อีกครั้ง');
+    } else {
+      email = await verifyGoogle(h.slice(7), env);
+    }
   }
   const rows = await loadAccess(store);
   const me = rows.find(r => r.email === email);
